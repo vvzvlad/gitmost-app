@@ -20,16 +20,15 @@ make build
 make run
 ```
 
-`make build` runs `./build-app.sh`, which builds the release binary with Swift
-Package Manager and wraps it into `Docmost.app` with a correct `Info.plist` and
-an app icon, then ad-hoc signs the bundle. `make run` builds the app and
-launches it.
+`make build` builds the release binary with Swift Package Manager and wraps it
+into `Docmost.app` with a correct `Info.plist` and an app icon, then ad-hoc signs
+the bundle. `make run` builds the app and launches it.
 
-You can also run the same steps directly:
+You can also run the steps directly:
 
 ```sh
 swift build       # SwiftPM debug build, no .app bundle
-./build-app.sh    # full release build and packaging into Docmost.app
+make build        # full release build and packaging into Docmost.app
 open Docmost.app  # launch the built app
 ```
 
@@ -57,7 +56,7 @@ All routine actions go through `make` (see `make help`):
 | Command      | Purpose                                               |
 |--------------|-------------------------------------------------------|
 | `make`       | Show the list of targets (same as `make help`)        |
-| `make build` | Release build of `Docmost.app` via `build-app.sh`     |
+| `make build` | Release build of `Docmost.app` (compile+bundle+sign)  |
 | `make run`   | Build and launch `Docmost.app`                        |
 | `make test`  | Run the unit tests (`swift test`)                     |
 | `make debug` | SwiftPM debug build (no `.app`)                       |

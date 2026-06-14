@@ -13,15 +13,17 @@ final class MainWindowController: NSWindowController {
         )
         window.title = "Docmost"
         window.contentViewController = MainViewController(store: store)
-        window.setFrameAutosaveName("DocmostMainWindow")
 
         super.init(window: window)
 
-        // On first launch there is no saved frame, so the window sits at origin (0,0) —
-        // center it. On later launches the autosave name restores the saved frame.
-        if window.frame.origin == .zero {
-            window.center()
+        // Restore the saved frame, then enable autosave. setFrameAutosaveName persists
+        // size/position changes automatically, but for a programmatically created window
+        // it does NOT restore them — so restore explicitly first via setFrameUsingName.
+        let autosaveName = NSWindow.FrameAutosaveName("DocmostMainWindow")
+        if !window.setFrameUsingName(autosaveName) {
+            window.center()   // no saved frame yet -> center on first launch
         }
+        window.setFrameAutosaveName(autosaveName)
     }
 
     required init?(coder: NSCoder) {

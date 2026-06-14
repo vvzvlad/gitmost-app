@@ -26,7 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build app bundle
-        run: ./build-app.sh
+        run: make build
       - name: Upload Docmost.app
         uses: actions/upload-artifact@v4
         with:
