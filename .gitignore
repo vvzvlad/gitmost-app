@@ -2,3 +2,6 @@
 Docmost.app/
 *.xcodeproj
 .DS_Store
+.swiftpm/
+*.dSYM/
+.claude/worktrees/

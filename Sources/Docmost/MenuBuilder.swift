@@ -1,7 +1,7 @@
 import AppKit
 
 // Builds and installs the application's main menu programmatically.
-// User-facing titles are in Russian. Standard selectors with nil targets are used
+// User-facing titles are in English. Standard selectors with nil targets are used
 // for Edit/View items so they route through the responder chain to the focused view
 // (this is what makes copy/paste work inside the Docmost web forms).
 enum MenuBuilder {
@@ -30,27 +30,27 @@ enum MenuBuilder {
         let item = NSMenuItem()
         let menu = NSMenu()
 
-        menu.addItem(withTitle: "О программе Docmost",
+        menu.addItem(withTitle: "About Docmost",
                      action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
                      keyEquivalent: "")
         menu.addItem(.separator())
 
-        menu.addItem(withTitle: "Скрыть",
+        menu.addItem(withTitle: "Hide Docmost",
                      action: #selector(NSApplication.hide(_:)),
                      keyEquivalent: "h")
 
-        let hideOthers = NSMenuItem(title: "Скрыть остальные",
+        let hideOthers = NSMenuItem(title: "Hide Others",
                                     action: #selector(NSApplication.hideOtherApplications(_:)),
                                     keyEquivalent: "h")
         hideOthers.keyEquivalentModifierMask = [.command, .option]
         menu.addItem(hideOthers)
 
-        menu.addItem(withTitle: "Показать все",
+        menu.addItem(withTitle: "Show All",
                      action: #selector(NSApplication.unhideAllApplications(_:)),
                      keyEquivalent: "")
         menu.addItem(.separator())
 
-        menu.addItem(withTitle: "Выйти из Docmost",
+        menu.addItem(withTitle: "Quit Docmost",
                      action: #selector(NSApplication.terminate(_:)),
                      keyEquivalent: "q")
 
@@ -61,17 +61,17 @@ enum MenuBuilder {
     // MARK: - File menu
 
     private static func fileMenuItem() -> NSMenuItem {
-        let item = NSMenuItem(title: "Файл", action: nil, keyEquivalent: "")
-        let menu = NSMenu(title: "Файл")
+        let item = NSMenuItem(title: "File", action: nil, keyEquivalent: "")
+        let menu = NSMenu(title: "File")
 
         // nil target -> routed through the responder chain to MainViewController.addServer(_:).
-        let addServer = NSMenuItem(title: "Добавить сервер…",
+        let addServer = NSMenuItem(title: "Add Server…",
                                    action: #selector(MainViewController.addServer(_:)),
                                    keyEquivalent: "n")
         addServer.target = nil
         menu.addItem(addServer)
 
-        menu.addItem(withTitle: "Закрыть окно",
+        menu.addItem(withTitle: "Close Window",
                      action: #selector(NSWindow.performClose(_:)),
                      keyEquivalent: "w")
 
@@ -82,21 +82,21 @@ enum MenuBuilder {
     // MARK: - Edit menu
 
     private static func editMenuItem() -> NSMenuItem {
-        let item = NSMenuItem(title: "Правка", action: nil, keyEquivalent: "")
-        let menu = NSMenu(title: "Правка")
+        let item = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
+        let menu = NSMenu(title: "Edit")
 
-        menu.addItem(withTitle: "Отменить", action: Selector(("undo:")), keyEquivalent: "z")
+        menu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
 
-        let redo = NSMenuItem(title: "Повторить", action: Selector(("redo:")), keyEquivalent: "z")
+        let redo = NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
         redo.keyEquivalentModifierMask = [.command, .shift]
         menu.addItem(redo)
 
         menu.addItem(.separator())
 
-        menu.addItem(withTitle: "Вырезать", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-        menu.addItem(withTitle: "Копировать", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        menu.addItem(withTitle: "Вставить", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        menu.addItem(withTitle: "Выбрать все", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        menu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        menu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        menu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        menu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
 
         item.submenu = menu
         return item
@@ -105,27 +105,47 @@ enum MenuBuilder {
     // MARK: - View menu
 
     private static func viewMenuItem() -> NSMenuItem {
-        let item = NSMenuItem(title: "Вид", action: nil, keyEquivalent: "")
-        let menu = NSMenu(title: "Вид")
+        let item = NSMenuItem(title: "View", action: nil, keyEquivalent: "")
+        let menu = NSMenu(title: "View")
 
         // All nil-targeted so they route to the current MainViewController.
-        let reload = NSMenuItem(title: "Обновить",
+        let reload = NSMenuItem(title: "Reload",
                                 action: #selector(MainViewController.reloadCurrent(_:)),
                                 keyEquivalent: "r")
         reload.target = nil
         menu.addItem(reload)
 
-        let back = NSMenuItem(title: "Назад",
+        let back = NSMenuItem(title: "Back",
                               action: #selector(MainViewController.goBack(_:)),
                               keyEquivalent: "[")
         back.target = nil
         menu.addItem(back)
 
-        let forward = NSMenuItem(title: "Вперёд",
+        let forward = NSMenuItem(title: "Forward",
                                  action: #selector(MainViewController.goForward(_:)),
                                  keyEquivalent: "]")
         forward.target = nil
         menu.addItem(forward)
+
+        menu.addItem(.separator())
+
+        let zoomIn = NSMenuItem(title: "Zoom In",
+                                action: #selector(MainViewController.zoomIn(_:)),
+                                keyEquivalent: "+")
+        zoomIn.target = nil
+        menu.addItem(zoomIn)
+
+        let zoomOut = NSMenuItem(title: "Zoom Out",
+                                 action: #selector(MainViewController.zoomOut(_:)),
+                                 keyEquivalent: "-")
+        zoomOut.target = nil
+        menu.addItem(zoomOut)
+
+        let actualSize = NSMenuItem(title: "Actual Size",
+                                    action: #selector(MainViewController.zoomReset(_:)),
+                                    keyEquivalent: "0")
+        actualSize.target = nil
+        menu.addItem(actualSize)
 
         item.submenu = menu
         return item
@@ -134,13 +154,13 @@ enum MenuBuilder {
     // MARK: - Window menu
 
     private static func windowMenuItem() -> NSMenuItem {
-        let item = NSMenuItem(title: "Окно", action: nil, keyEquivalent: "")
-        let menu = NSMenu(title: "Окно")
+        let item = NSMenuItem(title: "Window", action: nil, keyEquivalent: "")
+        let menu = NSMenu(title: "Window")
 
-        menu.addItem(withTitle: "Свернуть",
+        menu.addItem(withTitle: "Minimize",
                      action: #selector(NSWindow.performMiniaturize(_:)),
                      keyEquivalent: "m")
-        menu.addItem(withTitle: "Масштаб",
+        menu.addItem(withTitle: "Zoom",
                      action: #selector(NSWindow.performZoom(_:)),
                      keyEquivalent: "")
 

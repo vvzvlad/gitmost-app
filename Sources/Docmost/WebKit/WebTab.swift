@@ -1,5 +1,6 @@
 import AppKit
 import WebKit
+import DocmostCore
 
 // Wraps one persistent WKWebView bound to a single server. Created lazily on first
 // selection and kept alive so switching tabs preserves scroll position and login state.
@@ -55,6 +56,11 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
         }
     }
 
+    // Applies the page zoom factor to this tab's web content.
+    func setPageZoom(_ factor: CGFloat) {
+        webView.pageZoom = factor
+    }
+
     func goBack() {
         if webView.canGoBack { webView.goBack() }
     }
@@ -82,6 +88,30 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
             webView.load(navigationAction.request)
         }
         return nil
+    }
+
+    // WKWebView shows no file chooser for <input type="file"> unless this is
+    // implemented. Bridge it to a native NSOpenPanel, honoring the page's
+    // directory/multiple-selection hints.
+    func webView(_ webView: WKWebView,
+                 runOpenPanelWith parameters: WKOpenPanelParameters,
+                 initiatedByFrame frame: WKFrameInfo,
+                 completionHandler: @escaping ([URL]?) -> Void) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = parameters.allowsDirectories
+        panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+        panel.resolvesAliases = true
+
+        let finish: (NSApplication.ModalResponse) -> Void = { response in
+            completionHandler(response == .OK ? panel.urls : nil)
+        }
+        // Present as a sheet on the web view's window when possible.
+        if let window = webView.window {
+            panel.beginSheetModal(for: window, completionHandler: finish)
+        } else {
+            panel.begin(completionHandler: finish)
+        }
     }
 
     // MARK: - WKNavigationDelegate

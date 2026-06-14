@@ -1,4 +1,5 @@
 import AppKit
+import DocmostCore
 
 // Hosts the tab strip on top and a content container below that shows the selected
 // server's persistent web view.
@@ -13,9 +14,16 @@ final class MainViewController: NSViewController {
     private var tabs: [UUID: WebTab] = [:]
     private var selectedID: UUID?
 
+    // App-wide page zoom, applied to every tab and persisted across launches.
+    private static let zoomDefaultsKey = "pageZoom"
+    private static let minZoom: CGFloat = 0.5
+    private static let maxZoom: CGFloat = 3.0
+    private static let zoomStep: CGFloat = 0.1
+    private var currentZoom: CGFloat = 1.0
+
     // Placeholder shown when there are no servers configured.
     private let placeholderLabel = NSTextField(labelWithString:
-        "Нет добавленных серверов. Откройте «Серверы…», чтобы добавить.")
+        "No servers configured. Open “Servers…” to add one.")
 
     // Settings window controller is held strongly while presented.
     private var settingsWindowController: SettingsWindowController?
@@ -36,6 +44,10 @@ final class MainViewController: NSViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+
+        // Restore the saved zoom; UserDefaults.double returns 0 when unset, so fall back to 1.0.
+        let savedZoom = UserDefaults.standard.double(forKey: Self.zoomDefaultsKey)
+        currentZoom = savedZoom > 0 ? CGFloat(savedZoom) : 1.0
 
         tabBar.translatesAutoresizingMaskIntoConstraints = false
         contentContainer.translatesAutoresizingMaskIntoConstraints = false
@@ -99,6 +111,8 @@ final class MainViewController: NSViewController {
             tabs[id] = tab
         }
         tab.loadIfNeeded()
+        // Apply the current zoom so new and existing tabs match the app-wide setting.
+        tab.setPageZoom(currentZoom)
 
         // Swap the visible web view inside the content container.
         if let current = selectedID, let currentTab = tabs[current], currentTab.webView.superview === contentContainer {
@@ -215,6 +229,22 @@ final class MainViewController: NSViewController {
     @objc func goForward(_ sender: Any?) {
         if let id = selectedID { tabs[id]?.goForward() }
     }
+
+    private func applyZoomToAllTabs() {
+        for tab in tabs.values { tab.setPageZoom(currentZoom) }
+    }
+
+    private func setZoom(_ factor: CGFloat) {
+        // Clamp and round to a clean 0.1 step to avoid float drift.
+        let clamped = min(max(factor, Self.minZoom), Self.maxZoom)
+        currentZoom = (clamped * 10).rounded() / 10
+        applyZoomToAllTabs()
+        UserDefaults.standard.set(Double(currentZoom), forKey: Self.zoomDefaultsKey)
+    }
+
+    @objc func zoomIn(_ sender: Any?) { setZoom(currentZoom + Self.zoomStep) }
+    @objc func zoomOut(_ sender: Any?) { setZoom(currentZoom - Self.zoomStep) }
+    @objc func zoomReset(_ sender: Any?) { setZoom(1.0) }
 
     @objc func addServer(_ sender: Any?) {
         presentSettings(thenAddServer: true)

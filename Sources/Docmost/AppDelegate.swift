@@ -1,4 +1,5 @@
 import AppKit
+import DocmostCore
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
 

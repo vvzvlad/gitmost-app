@@ -1,4 +1,5 @@
 import AppKit
+import DocmostCore
 
 // Owns the main window and installs MainViewController as its content view controller.
 final class MainWindowController: NSWindowController {

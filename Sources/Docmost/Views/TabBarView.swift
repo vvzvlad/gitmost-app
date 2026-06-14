@@ -1,4 +1,5 @@
 import AppKit
+import DocmostCore
 
 // A horizontal strip of tab buttons (one per server) plus a trailing settings button.
 final class TabBarView: NSView {
@@ -33,7 +34,7 @@ final class TabBarView: NSView {
         stackView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stackView)
 
-        settingsButton.title = "Серверы…"
+        settingsButton.title = "Servers…"
         settingsButton.bezelStyle = .rounded
         settingsButton.setButtonType(.momentaryPushIn)
         settingsButton.target = self

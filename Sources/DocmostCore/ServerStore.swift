@@ -1,19 +1,19 @@
 import Foundation
 
-extension Notification.Name {
+public extension Notification.Name {
     static let serversDidChange = Notification.Name("ServersDidChange")
 }
 
 // Persists the list of configured servers in UserDefaults as JSON.
-final class ServerStore {
+public final class ServerStore {
 
     private static let defaultsKey = "servers"
 
-    private(set) var servers: [Server]
+    public private(set) var servers: [Server]
 
     private let defaults: UserDefaults
 
-    init(defaults: UserDefaults = .standard) {
+    public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         // Load on init; fall back to an empty list if missing or corrupt.
         if let data = defaults.data(forKey: Self.defaultsKey),
@@ -26,7 +26,7 @@ final class ServerStore {
 
     // MARK: - Mutations
 
-    func add(name: String, urlString: String) {
+    public func add(name: String, urlString: String) {
         guard let url = Self.normalizeURL(urlString) else { return }
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         // Fall back to the host as the display name if the user left it blank.
@@ -35,13 +35,13 @@ final class ServerStore {
         persistAndNotify()
     }
 
-    func update(_ server: Server) {
+    public func update(_ server: Server) {
         guard let index = servers.firstIndex(where: { $0.id == server.id }) else { return }
         servers[index] = server
         persistAndNotify()
     }
 
-    func remove(id: UUID) {
+    public func remove(id: UUID) {
         servers.removeAll { $0.id == id }
         persistAndNotify()
     }
@@ -49,7 +49,7 @@ final class ServerStore {
     // Reorders a server. `destinationIndex` follows the NSTableView drop convention:
     // it is the index in the array BEFORE removal where the item should land, so we
     // subtract one when moving an item forward (destination > source).
-    func move(from sourceIndex: Int, to destinationIndex: Int) {
+    public func move(from sourceIndex: Int, to destinationIndex: Int) {
         guard servers.indices.contains(sourceIndex),
               destinationIndex >= 0, destinationIndex <= servers.count else { return }
         let item = servers.remove(at: sourceIndex)
@@ -71,7 +71,7 @@ final class ServerStore {
 
     // Normalize a user-entered URL string: trim, default to https:// when no
     // scheme is present, and require a host. Returns nil for invalid input.
-    static func normalizeURL(_ raw: String) -> URL? {
+    public static func normalizeURL(_ raw: String) -> URL? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 

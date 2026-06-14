@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show Swift version
+        run: swift --version
+      - name: Run tests
+        run: swift test
+
+  build:
+    runs-on: macos-14
+    needs: test                       # no green tests -> no build
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build app bundle
+        run: ./build-app.sh
+      - name: Upload Docmost.app
+        uses: actions/upload-artifact@v4
+        with:
+          name: Docmost-app
+          path: Docmost.app

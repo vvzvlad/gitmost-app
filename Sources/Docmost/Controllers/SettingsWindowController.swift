@@ -1,4 +1,5 @@
 import AppKit
+import DocmostCore
 
 // Manages the list of servers: a table with Name/URL columns plus add/remove/edit.
 final class SettingsWindowController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate {
@@ -18,7 +19,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             backing: .buffered,
             defer: false
         )
-        window.title = "Серверы"
+        window.title = "Servers"
 
         super.init(window: window)
 
@@ -50,10 +51,10 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         scrollView.borderType = .bezelBorder
 
         let nameColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
-        nameColumn.title = "Название"
+        nameColumn.title = "Name"
         nameColumn.width = 180
         let urlColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("url"))
-        urlColumn.title = "Адрес"
+        urlColumn.title = "Address"
         urlColumn.width = 320
 
         tableView.addTableColumn(nameColumn)
@@ -74,12 +75,12 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         removeButton.target = self
         removeButton.action = #selector(removeSelected)
 
-        editButton.title = "Изменить…"
+        editButton.title = "Edit…"
         editButton.bezelStyle = .rounded
         editButton.target = self
         editButton.action = #selector(editSelected)
 
-        let closeButton = NSButton(title: "Готово", target: self, action: #selector(closeSettings))
+        let closeButton = NSButton(title: "Done", target: self, action: #selector(closeSettings))
         closeButton.bezelStyle = .rounded
         closeButton.keyEquivalent = "\r"
 
@@ -163,9 +164,9 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         beginAddServer()
     }
 
-    // Public entry point so the menu / "Добавить сервер…" can open the add sheet.
+    // Public entry point so the menu / "Add Server…" can open the add sheet.
     func beginAddServer() {
-        presentEditor(title: "Новый сервер", name: "", urlString: "") { [weak self] name, urlString in
+        presentEditor(title: "New Server", name: "", urlString: "") { [weak self] name, urlString in
             self?.store.add(name: name, urlString: urlString)
         }
     }
@@ -174,7 +175,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         let row = tableView.selectedRow
         guard store.servers.indices.contains(row) else { return }
         let server = store.servers[row]
-        presentEditor(title: "Изменить сервер",
+        presentEditor(title: "Edit Server",
                       name: server.name,
                       urlString: server.url.absoluteString) { [weak self] name, urlString in
             guard let url = ServerStore.normalizeURL(urlString) else { return }
@@ -190,10 +191,10 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         let server = store.servers[row]
 
         let alert = NSAlert()
-        alert.messageText = "Удалить сервер «\(server.name)»?"
-        alert.informativeText = "Это действие нельзя отменить."
-        alert.addButton(withTitle: "Удалить")
-        alert.addButton(withTitle: "Отмена")
+        alert.messageText = "Delete server “\(server.name)”?"
+        alert.informativeText = "This action cannot be undone."
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
         alert.alertStyle = .warning
 
         let respond: (NSApplication.ModalResponse) -> Void = { [weak self] response in
@@ -227,11 +228,11 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
                                onConfirm: @escaping (String, String) -> Void) {
         let alert = NSAlert()
         alert.messageText = title
-        alert.addButton(withTitle: "Сохранить")
-        alert.addButton(withTitle: "Отмена")
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
 
         let nameField = NSTextField(frame: NSRect(x: 0, y: 32, width: 320, height: 24))
-        nameField.placeholderString = "Название"
+        nameField.placeholderString = "Name"
         nameField.stringValue = name
 
         let urlField = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
@@ -266,10 +267,10 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
     private func showInvalidURLAlert() {
         let alert = NSAlert()
-        alert.messageText = "Некорректный URL"
-        alert.informativeText = "Проверьте адрес сервера и попробуйте снова."
+        alert.messageText = "Invalid URL"
+        alert.informativeText = "Check the server address and try again."
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "ОК")
+        alert.addButton(withTitle: "OK")
         if let window = window {
             alert.beginSheetModal(for: window, completionHandler: nil)
         } else {
