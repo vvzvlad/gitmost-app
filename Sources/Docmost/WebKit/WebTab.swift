@@ -18,7 +18,7 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
     // Tracks the chosen destination per download so we can reveal it on completion.
     private var downloadDestinations: [ObjectIdentifier: URL] = [:]
 
-    init(server: Server) {
+    init(server: Server, customJS: String?, customCSS: String?) {
         self.server = server
 
         let configuration = WKWebViewConfiguration()
@@ -28,6 +28,10 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
         // NOTE: if same-domain multi-account is ever needed, switch to
         // WKWebsiteDataStore(forIdentifier:) for true per-server isolation.
         configuration.websiteDataStore = .default()
+
+        let controller = WKUserContentController()
+        WebTab.installUserScripts(into: controller, js: customJS, css: customCSS)
+        configuration.userContentController = controller
 
         self.webView = WKWebView(frame: .zero, configuration: configuration)
 
@@ -59,6 +63,25 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
     // Applies the page zoom factor to this tab's web content.
     func setPageZoom(_ factor: CGFloat) {
         webView.pageZoom = factor
+    }
+
+    // MARK: - Custom user scripts
+
+    // Installs the custom CSS (as a <style> injector) and JS user scripts.
+    // Both run at document end in the main frame only.
+    static func installUserScripts(into controller: WKUserContentController,
+                                   js: String?, css: String?) {
+        if let css = css, !css.isEmpty {
+            let source = UserScripts.styleInjectionJS(forCSS: css)
+            controller.addUserScript(WKUserScript(source: source,
+                                                  injectionTime: .atDocumentEnd,
+                                                  forMainFrameOnly: true))
+        }
+        if let js = js, !js.isEmpty {
+            controller.addUserScript(WKUserScript(source: js,
+                                                  injectionTime: .atDocumentEnd,
+                                                  forMainFrameOnly: true))
+        }
     }
 
     func goBack() {

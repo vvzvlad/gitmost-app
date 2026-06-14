@@ -107,7 +107,7 @@ final class MainViewController: NSViewController {
         if let existing = tabs[id] {
             tab = existing
         } else {
-            tab = WebTab(server: server)
+            tab = WebTab(server: server, customJS: UserScripts.js, customCSS: UserScripts.css)
             tabs[id] = tab
         }
         tab.loadIfNeeded()

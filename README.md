@@ -49,6 +49,17 @@ automatically. The server list is stored locally.
 - A native file picker (NSOpenPanel) is used for uploads.
 - Page zoom via ⌘+ / ⌘− / ⌘0; the zoom level is persisted.
 
+## Built-in JS/CSS
+
+The app ships with built-in JavaScript and CSS that are compiled into the
+program and injected into every server tab. There is no external folder or
+editable file. Currently the built-in script hides the unavailable paid-only
+"Resolved" comments UI (the "Resolved" tab in the comments panel and the
+disabled "Resolve comment" context-menu item).
+
+To change the injected JS/CSS, edit the embedded `js`/`css` constants in
+`Sources/DocmostCore/UserScripts.swift` and rebuild.
+
 ## Development
 
 All routine actions go through `make` (see `make help`):
