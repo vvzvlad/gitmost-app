@@ -1,6 +1,10 @@
 import Foundation
 
 // Built-in scripts injected into every Docmost server tab, plus CSS-injection helpers.
+//
+// Adding/altering UI filters or custom components? Read the playbook first:
+// .claude/skills/web-ui-injection/SKILL.md (how to find rebuild-stable
+// selectors against the DEPLOYED Docmost build, not GitHub main).
 public enum UserScripts {
 
     // Global CSS injected into every Docmost server tab.
