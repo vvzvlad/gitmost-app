@@ -78,6 +78,7 @@ final class MainViewController: NSViewController {
 
         tabBar.onSelect = { [weak self] id in self?.select(id: id) }
         tabBar.onOpenSettings = { [weak self] in self?.openSettings() }
+        tabBar.onGoBack = { [weak self] in self?.goBack(nil) }
 
         NotificationCenter.default.addObserver(self,
                                                selector: #selector(serversDidChange),
@@ -108,6 +109,12 @@ final class MainViewController: NSViewController {
             tab = existing
         } else {
             tab = WebTab(server: server, customJS: UserScripts.js, customCSS: UserScripts.css)
+            // Toggle the Back button as this tab navigates to/from external sites.
+            // Only act when this tab is the visible one.
+            tab.onNavigationStateChanged = { [weak self, weak tab] in
+                guard let self, let tab, self.selectedID == id else { return }
+                self.tabBar.setBackButtonVisible(tab.isShowingExternalContent)
+            }
             tabs[id] = tab
         }
         tab.loadIfNeeded()
@@ -132,6 +139,8 @@ final class MainViewController: NSViewController {
         selectedID = id
         placeholderLabel.isHidden = true
         tabBar.reload(servers: store.servers, selectedID: id)
+        // Reflect the selected tab's current location (each tab has its own URL/history).
+        tabBar.setBackButtonVisible(tab.isShowingExternalContent)
     }
 
     private func updatePlaceholder() {
@@ -176,6 +185,7 @@ final class MainViewController: NSViewController {
             } else {
                 tabBar.reload(servers: currentServers, selectedID: nil)
                 updatePlaceholder()
+                tabBar.setBackButtonVisible(false)
             }
         }
     }

@@ -6,9 +6,12 @@ final class TabBarView: NSView {
 
     var onSelect: ((UUID) -> Void)?
     var onOpenSettings: (() -> Void)?
+    var onGoBack: (() -> Void)?
 
     private let stackView = NSStackView()
     private let settingsButton = NSButton()
+    // Leading "Back" button shown only while an external (non-server) page is open.
+    private let backButton = NSButton()
 
     // Maps a tab button back to its server id.
     private var buttonsByID: [UUID: NSButton] = [:]
@@ -31,8 +34,23 @@ final class TabBarView: NSView {
         stackView.orientation = .horizontal
         stackView.alignment = .centerY
         stackView.spacing = 4
+        // Hidden arranged subviews are detached from layout, so the hidden back
+        // button leaves no leading gap before the server tabs.
+        stackView.detachesHiddenViews = true
         stackView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stackView)
+
+        // Back button: first item in the strip, hidden until an external page opens.
+        backButton.title = "Back"
+        backButton.image = NSImage(systemSymbolName: "chevron.backward",
+                                   accessibilityDescription: "Back")
+        backButton.imagePosition = .imageLeading
+        backButton.bezelStyle = .rounded
+        backButton.setButtonType(.momentaryPushIn)
+        backButton.target = self
+        backButton.action = #selector(backClicked)
+        backButton.isHidden = true
+        stackView.addArrangedSubview(backButton)
 
         settingsButton.title = "Servers…"
         settingsButton.bezelStyle = .rounded
@@ -65,10 +83,10 @@ final class TabBarView: NSView {
 
     // Rebuild the tab buttons for the given servers and highlight the selected one.
     func reload(servers: [Server], selectedID: UUID?) {
-        // Remove all existing tab buttons.
-        for view in stackView.arrangedSubviews {
-            stackView.removeArrangedSubview(view)
-            view.removeFromSuperview()
+        // Remove existing per-server tab buttons, keeping the persistent back button.
+        for button in buttonsByID.values {
+            stackView.removeArrangedSubview(button)
+            button.removeFromSuperview()
         }
         buttonsByID.removeAll()
 
@@ -98,5 +116,14 @@ final class TabBarView: NSView {
 
     @objc private func settingsClicked() {
         onOpenSettings?()
+    }
+
+    // Show/hide the leading Back button (used when an external page is displayed).
+    func setBackButtonVisible(_ visible: Bool) {
+        backButton.isHidden = !visible
+    }
+
+    @objc private func backClicked() {
+        onGoBack?()
     }
 }

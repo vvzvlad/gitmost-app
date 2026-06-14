@@ -15,6 +15,13 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
     // Guards against reloading the start URL on every tab switch.
     private var hasLoaded = false
 
+    // Fired (on the main thread) whenever the web view's URL changes, so the host
+    // controller can refresh navigation chrome (e.g. the Back button).
+    var onNavigationStateChanged: (() -> Void)?
+
+    // KVO token for `webView.url`.
+    private var urlObservation: NSKeyValueObservation?
+
     // Tracks the chosen destination per download so we can reveal it on completion.
     private var downloadDestinations: [ObjectIdentifier: URL] = [:]
 
@@ -41,9 +48,23 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
         webView.allowsBackForwardNavigationGestures = true
         webView.navigationDelegate = self
         webView.uiDelegate = self
+
+        // Notify the UI when the current location changes so it can show a Back
+        // button while foreign (non-server) content is displayed. KVO on `url`
+        // fires for full navigations, redirects, back/forward and SPA route
+        // changes, all on the main thread.
+        urlObservation = webView.observe(\.url, options: [.new]) { [weak self] _, _ in
+            self?.onNavigationStateChanged?()
+        }
     }
 
     // MARK: - Loading / navigation
+
+    // True while the web view shows content on a different host than the server
+    // (an external site reached via a link, redirect, window.open or form post).
+    var isShowingExternalContent: Bool {
+        server.isExternalURL(webView.url)
+    }
 
     func loadIfNeeded() {
         guard !hasLoaded else { return }
@@ -94,6 +115,8 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
 
     // Stop any in-flight load and detach delegates before this tab is discarded.
     func tearDown() {
+        urlObservation?.invalidate()
+        urlObservation = nil
         webView.stopLoading()
         webView.navigationDelegate = nil
         webView.uiDelegate = nil
@@ -148,8 +171,7 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
            let url = navigationAction.request.url,
            let scheme = url.scheme?.lowercased(),
            scheme == "http" || scheme == "https",
-           let host = url.host,
-           host != server.url.host {
+           server.isExternalURL(url) {
             NSWorkspace.shared.open(url)
             decisionHandler(.cancel)
             return
