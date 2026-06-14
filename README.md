@@ -1,76 +1,73 @@
+[Русская версия](README.ru.md)
+
 # Docmost
 
-Нативное macOS-приложение, которое показывает веб-интерфейс [Docmost](https://docmost.com/)
-для нескольких ваших серверов. Каждый сервер — отдельная вкладка в одном окне.
-Переключение вкладок переключает серверы, авторизация сохраняется между запусками.
+A native macOS app that embeds the [Docmost](https://docmost.com/) web UI for
+several of your own servers. Each server is a tab in a single window; switching
+tabs switches servers, and sessions (logins) persist across launches.
 
-## Требования
+## Requirements
 
-- macOS 14.0 или новее
-- Установленный тулчейн Swift (например, из Xcode 15+ или Command Line Tools)
+- macOS 14.0 or newer
+- A Swift toolchain (Xcode 15+ or the Command Line Tools)
 
-## Сборка
+## Build & run
 
-Основной путь — через `make`:
+The primary path is `make`:
 
 ```sh
 make build
+make run
 ```
 
-`make build` запускает `./build-app.sh`, который собирает релизный бинарник через
-Swift Package Manager и упаковывает его в `Docmost.app` с корректным `Info.plist`,
-после чего подписывает ad-hoc подписью.
+`make build` runs `./build-app.sh`, which builds the release binary with Swift
+Package Manager and wraps it into `Docmost.app` with a correct `Info.plist` and
+an app icon, then ad-hoc signs the bundle. `make run` builds the app and
+launches it.
 
-Альтернативно можно вызвать те же шаги напрямую — отладочная сборка без упаковки:
+You can also run the same steps directly:
 
 ```sh
-swift build
+swift build       # SwiftPM debug build, no .app bundle
+./build-app.sh    # full release build and packaging into Docmost.app
+open Docmost.app  # launch the built app
 ```
 
-или полная упаковка вручную:
+## Adding servers
 
-```sh
-./build-app.sh
-```
+Open “Servers…” in the tab bar (or press Cmd+N — “Add Server…”), then enter a
+name and an address. If you omit the scheme, `https://` is prepended
+automatically. The server list is stored locally.
 
-## Запуск
+## Features
 
-```sh
-open Docmost.app
-```
+- Per-domain persistent sessions: cookies and logins survive restarts via
+  WebKit's persistent data store, isolated per domain.
+- External link clicks (a link to a different domain) open in the default
+  browser. Redirects and SSO/OAuth flows stay inside the app.
+- Files that can't be shown inline download to `~/Downloads` and are revealed
+  in Finder.
+- A native file picker (NSOpenPanel) is used for uploads.
+- Page zoom via ⌘+ / ⌘− / ⌘0; the zoom level is persisted.
 
-## Добавление серверов
+## Development
 
-Откройте «Servers…» в панели вкладок (или нажмите Cmd+N — «Add Server…»),
-введите название и адрес сервера. Если схема не указана, автоматически
-подставляется `https://`. Список серверов хранится локально.
+All routine actions go through `make` (see `make help`):
 
-Приложению не нужны переменные окружения или секреты: серверы добавляются
-прямо в интерфейсе и хранятся локально в `UserDefaults`.
-
-## Особенности
-
-- Сессии (cookie / авторизация) сохраняются между запусками: используется
-  постоянное хранилище WebKit, изолированное по доменам.
-- Внешние ссылки (клик по ссылке на другой домен) открываются в браузере
-  по умолчанию. Редиректы и SSO/OAuth-переходы остаются внутри приложения.
-- Файлы, которые нельзя показать внутри, скачиваются в `~/Downloads`.
-
-## Разработка
-
-Все рутинные действия — через `make` (см. `make help`):
-
-| Команда      | Назначение                                            |
+| Command      | Purpose                                               |
 |--------------|-------------------------------------------------------|
-| `make`       | Показать список целей (то же, что `make help`)        |
-| `make build` | Релизная сборка `Docmost.app` через `build-app.sh`    |
-| `make run`   | Собрать и запустить `Docmost.app`                     |
-| `make test`  | Прогнать юнит-тесты (`swift test`)                    |
-| `make debug` | Отладочная сборка SwiftPM (без `.app`)                |
-| `make clean` | Удалить артефакты сборки                              |
+| `make`       | Show the list of targets (same as `make help`)        |
+| `make build` | Release build of `Docmost.app` via `build-app.sh`     |
+| `make run`   | Build and launch `Docmost.app`                        |
+| `make test`  | Run the unit tests (`swift test`)                     |
+| `make debug` | SwiftPM debug build (no `.app`)                       |
+| `make icon`  | Regenerate the app icon (`Resources/AppIcon.icns`)    |
+| `make clean` | Remove build artifacts                                |
 
-Тесты лежат в `Tests/DocmostCoreTests` и запускаются через `make test`.
-Покрывается чистая логика из `Sources/DocmostCore` (модели и хранилище серверов).
+The tests live in `Tests/DocmostCoreTests` and run via `make test`. They cover
+the pure logic in `Sources/DocmostCore` (the server models and storage).
 
-Приложению не нужны переменные окружения или секреты: серверы добавляются
-в интерфейсе и хранятся локально в `UserDefaults`.
+## Configuration
+
+The app needs no environment variables or secrets: servers are configured in the
+UI and stored locally in `UserDefaults`.

@@ -13,6 +13,12 @@ cd "$SCRIPT_DIR"
 echo "==> Building release binary..."
 swift build -c release
 
+# Generate the app icon if it has not been built yet (committed asset).
+if [[ ! -f "Resources/AppIcon.icns" ]]; then
+    echo "==> Generating app icon..."
+    swift scripts/make-icon.swift
+fi
+
 BIN_PATH=".build/release/${APP_NAME}"
 if [[ ! -f "$BIN_PATH" ]]; then
     echo "error: built binary not found at $BIN_PATH" >&2
@@ -26,6 +32,7 @@ mkdir -p "${APP_DIR}/Contents/MacOS"
 mkdir -p "${APP_DIR}/Contents/Resources"
 
 cp "$BIN_PATH" "${APP_DIR}/Contents/MacOS/${APP_NAME}"
+cp "Resources/AppIcon.icns" "${APP_DIR}/Contents/Resources/AppIcon.icns"
 
 cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -40,6 +47,10 @@ cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
     <string>${APP_NAME}</string>
     <key>CFBundleIdentifier</key>
     <string>${BUNDLE_ID}</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleIconName</key>
+    <string>AppIcon</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

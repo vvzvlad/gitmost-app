@@ -26,6 +26,10 @@ run: build ## Build and launch Docmost.app
 test: ## Run the unit tests
 	swift test
 
+.PHONY: icon
+icon: ## Regenerate the app icon (Resources/AppIcon.icns)
+	swift scripts/make-icon.swift
+
 .PHONY: clean
 clean: ## Remove build artifacts
 	swift package clean
