@@ -3,8 +3,58 @@ import Foundation
 // Built-in scripts injected into every Docmost server tab, plus CSS-injection helpers.
 public enum UserScripts {
 
-    // Global CSS injected into every Docmost server tab. Empty for now.
-    public static let css: String = ""
+    // Global CSS injected into every Docmost server tab.
+    // Notes: Docmost is built with Vite CSS modules, whose production class
+    // names keep the source name as a prefix (e.g. ".menuItems" becomes
+    // "._menuItems_1k1tz_32"). Substring matching on that prefix is stable
+    // across rebuilds; the trailing hash is not. ":has()" is available because
+    // the app targets macOS 14+ (WebKit with :has support).
+    public static let css: String = """
+    /* 1. Remove the space sidebar action block (Overview / Search /
+          Space settings / New page). The space switcher and the page tree are
+          left untouched. ".menuItems" lives inside a ".section"; hiding the
+          whole section drops its divider and spacing too. The second selector
+          is a navbar-scoped fallback that still hides the menu if the wrapping
+          section ever changes, without matching a stray ".menuItems" elsewhere. */
+    [class*="_section_"]:has([class*="_menuItems_"]),
+    [class*="_navbar_"] [class*="_menuItems_"] {
+        display: none !important;
+    }
+
+    /* 2. Remove the Comments panel. The right Aside is shared by Comments,
+          Table of contents and Details, so it is hidden only while it shows the
+          comment tabs. Mantine builds tab ids as "{id}-tab-{value}", so the
+          "Resolved" tab id ends with "-tab-resolved" — unique to the comments
+          panel and present even when that tab is visually hidden elsewhere. */
+    [class*="_aside_"]:has([role="tab"][id*="-tab-resolved"]) {
+        display: none !important;
+    }
+
+    /* 3. Shrink the page tree indentation. react-arborist applies an inline
+          "padding-left: level * 24px" to each row's node element; the row is
+          "[role=treeitem]" with "aria-level = level + 1". Override per level to
+          an 8px step (author !important beats the inline style). Levels deeper
+          than listed keep the default indentation. */
+    [role="treeitem"][aria-level="2"] [class*="_node_"] { padding-left: 8px !important; }
+    [role="treeitem"][aria-level="3"] [class*="_node_"] { padding-left: 16px !important; }
+    [role="treeitem"][aria-level="4"] [class*="_node_"] { padding-left: 24px !important; }
+    [role="treeitem"][aria-level="5"] [class*="_node_"] { padding-left: 32px !important; }
+    [role="treeitem"][aria-level="6"] [class*="_node_"] { padding-left: 40px !important; }
+    [role="treeitem"][aria-level="7"] [class*="_node_"] { padding-left: 48px !important; }
+    [role="treeitem"][aria-level="8"] [class*="_node_"] { padding-left: 56px !important; }
+    [role="treeitem"][aria-level="9"] [class*="_node_"] { padding-left: 64px !important; }
+    [role="treeitem"][aria-level="10"] [class*="_node_"] { padding-left: 72px !important; }
+    [role="treeitem"][aria-level="11"] [class*="_node_"] { padding-left: 80px !important; }
+    [role="treeitem"][aria-level="12"] [class*="_node_"] { padding-left: 88px !important; }
+    [role="treeitem"][aria-level="13"] [class*="_node_"] { padding-left: 96px !important; }
+    [role="treeitem"][aria-level="14"] [class*="_node_"] { padding-left: 104px !important; }
+    [role="treeitem"][aria-level="15"] [class*="_node_"] { padding-left: 112px !important; }
+    [role="treeitem"][aria-level="16"] [class*="_node_"] { padding-left: 120px !important; }
+    [role="treeitem"][aria-level="17"] [class*="_node_"] { padding-left: 128px !important; }
+    [role="treeitem"][aria-level="18"] [class*="_node_"] { padding-left: 136px !important; }
+    [role="treeitem"][aria-level="19"] [class*="_node_"] { padding-left: 144px !important; }
+    [role="treeitem"][aria-level="20"] [class*="_node_"] { padding-left: 152px !important; }
+    """
 
     // Global JS injected into every Docmost server tab.
     // Currently: hides the paid-only "Resolved" comments UI, which is unavailable.

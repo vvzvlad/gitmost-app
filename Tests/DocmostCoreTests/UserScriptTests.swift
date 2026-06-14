@@ -34,4 +34,16 @@ final class UserScriptTests: XCTestCase {
         // It uses a MutationObserver because the menu is rendered on demand.
         XCTAssertTrue(UserScripts.js.contains("MutationObserver"))
     }
+
+    // MARK: - Embedded global CSS
+
+    func testEmbeddedCSSAppliesUICustomizations() {
+        let css = UserScripts.css
+        // Hides the space sidebar action menu (Overview / Search / Space settings / New page).
+        XCTAssertTrue(css.contains("_menuItems_"))
+        // Hides the comments panel via the Mantine "Resolved" tab id.
+        XCTAssertTrue(css.contains("-tab-resolved"))
+        // Shrinks the page tree indentation via per-level aria-level overrides.
+        XCTAssertTrue(css.contains("[role=\"treeitem\"][aria-level=\"2\"]"))
+    }
 }
