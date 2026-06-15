@@ -1,7 +1,8 @@
 import AppKit
 import DocmostCore
 
-// A horizontal strip of tab buttons (one per server) plus a trailing settings button.
+// A horizontal strip with a leading Back button, browser-style server tabs (one
+// per server) and a trailing settings button.
 final class TabBarView: NSView {
 
     var onSelect: ((UUID) -> Void)?
@@ -12,9 +13,12 @@ final class TabBarView: NSView {
     private let settingsButton = NSButton()
     // Leading "Back" button shown only while an external (non-server) page is open.
     private let backButton = NSButton()
+    // Bottom hairline; added before the tabs so the selected tab covers it and
+    // appears connected to the content area below.
+    private let separator = NSBox()
 
-    // Maps a tab button back to its server id.
-    private var buttonsByID: [UUID: NSButton] = [:]
+    // One tab view per server, keyed by server id.
+    private var tabsByID: [UUID: TabItemView] = [:]
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -31,11 +35,17 @@ final class TabBarView: NSView {
         // Subtle native bar background.
         layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
 
+        // Bottom separator first => behind the tabs (the selected tab covers it).
+        separator.boxType = .separator
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(separator)
+
+        // Full-height row so tabs reach the bottom edge and connect to the content.
         stackView.orientation = .horizontal
         stackView.alignment = .centerY
-        stackView.spacing = 4
+        stackView.spacing = 2
         // Hidden arranged subviews are detached from layout, so the hidden back
-        // button leaves no leading gap before the server tabs.
+        // button leaves no leading gap before the tabs.
         stackView.detachesHiddenViews = true
         stackView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stackView)
@@ -60,15 +70,10 @@ final class TabBarView: NSView {
         settingsButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(settingsButton)
 
-        // Bottom separator line for a clean native look.
-        let separator = NSBox()
-        separator.boxType = .separator
-        separator.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(separator)
-
         NSLayoutConstraint.activate([
             stackView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            stackView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            stackView.topAnchor.constraint(equalTo: topAnchor),
+            stackView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
             settingsButton.leadingAnchor.constraint(greaterThanOrEqualTo: stackView.trailingAnchor, constant: 8),
             settingsButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
@@ -81,46 +86,41 @@ final class TabBarView: NSView {
         ])
     }
 
-    // Rebuild the tab buttons for the given servers and highlight the selected one.
+    // Rebuild the server tabs and highlight the selected one.
     func reload(servers: [Server], selectedID: UUID?) {
-        // Remove existing per-server tab buttons, keeping the persistent back button.
-        for button in buttonsByID.values {
-            stackView.removeArrangedSubview(button)
-            button.removeFromSuperview()
+        // Remove existing tab views, keeping the persistent back button.
+        for item in tabsByID.values {
+            stackView.removeArrangedSubview(item)
+            item.removeFromSuperview()
         }
-        buttonsByID.removeAll()
+        tabsByID.removeAll()
 
         for server in servers {
-            let button = NSButton()
-            button.title = server.name
-            button.bezelStyle = .rounded
-            // A toggle push button gives a clear on/off visual for the active tab.
-            button.setButtonType(.pushOnPushOff)
-            button.target = self
-            button.action = #selector(tabClicked(_:))
-            button.identifier = NSUserInterfaceItemIdentifier(server.id.uuidString)
-            button.state = (server.id == selectedID) ? .on : .off
-            stackView.addArrangedSubview(button)
-            buttonsByID[server.id] = button
+            let id = server.id
+            let item = TabItemView(title: server.name)
+            item.onClick = { [weak self] in self?.onSelect?(id) }
+            item.setSelected(id == selectedID)
+            stackView.addArrangedSubview(item)
+            // Tabs span the full bar height so they reach (and cover) the bottom line.
+            item.heightAnchor.constraint(equalTo: heightAnchor).isActive = true
+            tabsByID[id] = item
         }
     }
 
-    @objc private func tabClicked(_ sender: NSButton) {
-        guard let raw = sender.identifier?.rawValue, let id = UUID(uuidString: raw) else { return }
-        // Keep the visual selection consistent immediately.
-        for (buttonID, button) in buttonsByID {
-            button.state = (buttonID == id) ? .on : .off
-        }
-        onSelect?(id)
-    }
-
-    @objc private func settingsClicked() {
-        onOpenSettings?()
+    // Keep the layer background in sync with the system appearance; a CGColor
+    // captured once is not adaptive, so re-resolve it on appearance changes.
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
     }
 
     // Show/hide the leading Back button (used when an external page is displayed).
     func setBackButtonVisible(_ visible: Bool) {
         backButton.isHidden = !visible
+    }
+
+    @objc private func settingsClicked() {
+        onOpenSettings?()
     }
 
     @objc private func backClicked() {
