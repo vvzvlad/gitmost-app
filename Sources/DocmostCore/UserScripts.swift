@@ -34,30 +34,31 @@ public enum UserScripts {
         display: none !important;
     }
 
-    /* 3. Shrink the page tree indentation. react-arborist applies an inline
-          "padding-left: level * 24px" to each row's node element; the row is
-          "[role=treeitem]" with "aria-level = level + 1". Override per level to
-          an 8px step (author !important beats the inline style). Levels deeper
-          than listed keep the default indentation. */
-    [role="treeitem"][aria-level="2"] [class*="_node_"] { padding-left: 8px !important; }
-    [role="treeitem"][aria-level="3"] [class*="_node_"] { padding-left: 16px !important; }
-    [role="treeitem"][aria-level="4"] [class*="_node_"] { padding-left: 24px !important; }
-    [role="treeitem"][aria-level="5"] [class*="_node_"] { padding-left: 32px !important; }
-    [role="treeitem"][aria-level="6"] [class*="_node_"] { padding-left: 40px !important; }
-    [role="treeitem"][aria-level="7"] [class*="_node_"] { padding-left: 48px !important; }
-    [role="treeitem"][aria-level="8"] [class*="_node_"] { padding-left: 56px !important; }
-    [role="treeitem"][aria-level="9"] [class*="_node_"] { padding-left: 64px !important; }
-    [role="treeitem"][aria-level="10"] [class*="_node_"] { padding-left: 72px !important; }
-    [role="treeitem"][aria-level="11"] [class*="_node_"] { padding-left: 80px !important; }
-    [role="treeitem"][aria-level="12"] [class*="_node_"] { padding-left: 88px !important; }
-    [role="treeitem"][aria-level="13"] [class*="_node_"] { padding-left: 96px !important; }
-    [role="treeitem"][aria-level="14"] [class*="_node_"] { padding-left: 104px !important; }
-    [role="treeitem"][aria-level="15"] [class*="_node_"] { padding-left: 112px !important; }
-    [role="treeitem"][aria-level="16"] [class*="_node_"] { padding-left: 120px !important; }
-    [role="treeitem"][aria-level="17"] [class*="_node_"] { padding-left: 128px !important; }
-    [role="treeitem"][aria-level="18"] [class*="_node_"] { padding-left: 136px !important; }
-    [role="treeitem"][aria-level="19"] [class*="_node_"] { padding-left: 144px !important; }
-    [role="treeitem"][aria-level="20"] [class*="_node_"] { padding-left: 152px !important; }
+    /* 3. Shrink the page tree indentation. The current DocTree applies an inline
+          "padding-left: level * 16px" to each row's ".rowWrapper" wrapper; the
+          row's "[role=treeitem]" (with "aria-level = level + 1") sits inside it.
+          Target the wrapper via :has() and override per level to an 8px step
+          (author !important beats the inline style). Levels deeper than listed
+          keep the default indentation. */
+    [class*="_rowWrapper_"]:has([role="treeitem"][aria-level="2"]) { padding-left: 8px !important; }
+    [class*="_rowWrapper_"]:has([role="treeitem"][aria-level="3"]) { padding-left: 16px !important; }
+    [class*="_rowWrapper_"]:has([role="treeitem"][aria-level="4"]) { padding-left: 24px !important; }
+    [class*="_rowWrapper_"]:has([role="treeitem"][aria-level="5"]) { padding-left: 32px !important; }
+    [class*="_rowWrapper_"]:has([role="treeitem"][aria-level="6"]) { padding-left: 40px !important; }
+    [class*="_rowWrapper_"]:has([role="treeitem"][aria-level="7"]) { padding-left: 48px !important; }
+    [class*="_rowWrapper_"]:has([role="treeitem"][aria-level="8"]) { padding-left: 56px !important; }
+    [class*="_rowWrapper_"]:has([role="treeitem"][aria-level="9"]) { padding-left: 64px !important; }
+    [class*="_rowWrapper_"]:has([role="treeitem"][aria-level="10"]) { padding-left: 72px !important; }
+    [class*="_rowWrapper_"]:has([role="treeitem"][aria-level="11"]) { padding-left: 80px !important; }
+    [class*="_rowWrapper_"]:has([role="treeitem"][aria-level="12"]) { padding-left: 88px !important; }
+    [class*="_rowWrapper_"]:has([role="treeitem"][aria-level="13"]) { padding-left: 96px !important; }
+    [class*="_rowWrapper_"]:has([role="treeitem"][aria-level="14"]) { padding-left: 104px !important; }
+    [class*="_rowWrapper_"]:has([role="treeitem"][aria-level="15"]) { padding-left: 112px !important; }
+    [class*="_rowWrapper_"]:has([role="treeitem"][aria-level="16"]) { padding-left: 120px !important; }
+    [class*="_rowWrapper_"]:has([role="treeitem"][aria-level="17"]) { padding-left: 128px !important; }
+    [class*="_rowWrapper_"]:has([role="treeitem"][aria-level="18"]) { padding-left: 136px !important; }
+    [class*="_rowWrapper_"]:has([role="treeitem"][aria-level="19"]) { padding-left: 144px !important; }
+    [class*="_rowWrapper_"]:has([role="treeitem"][aria-level="20"]) { padding-left: 152px !important; }
     """
 
     // Global JS injected into every Docmost server tab.
