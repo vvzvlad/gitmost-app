@@ -111,9 +111,11 @@ final class MainViewController: NSViewController {
         if let existing = tabs[id] {
             tab = existing
         } else {
-            // Reopen the last visited internal page if we have a valid one; else the root.
+            // Reopen the last visited editable page if we have a valid one; else the root.
+            // Share (read-only) pages are never restored.
             let startURL = lastLocationStore.load(for: id)
-                .flatMap { server.isInternalPageURL($0) ? $0 : nil } ?? server.url
+                .flatMap { server.isInternalPageURL($0) && !server.isSharePageURL($0) ? $0 : nil }
+                ?? server.url
             tab = WebTab(server: server, startURL: startURL,
                          customJS: UserScripts.js, customCSS: UserScripts.css)
             tab.onNavigationStateChanged = { [weak self, weak tab] in
@@ -122,7 +124,7 @@ final class MainViewController: NSViewController {
                 self.persistLocation(of: tab, serverID: id)
                 // Toggle the Back button only for the visible tab.
                 if self.selectedID == id {
-                    self.tabBar.setBackButtonVisible(tab.isShowingExternalContent)
+                    self.tabBar.setBackButtonVisible(tab.showsBackButton)
                 }
             }
             tabs[id] = tab
@@ -150,7 +152,7 @@ final class MainViewController: NSViewController {
         placeholderLabel.isHidden = true
         tabBar.reload(servers: store.servers, selectedID: id)
         // Reflect the selected tab's current location (each tab has its own URL/history).
-        tabBar.setBackButtonVisible(tab.isShowingExternalContent)
+        tabBar.setBackButtonVisible(tab.showsBackButton)
     }
 
     private func updatePlaceholder() {
@@ -251,9 +253,12 @@ final class MainViewController: NSViewController {
     }
 
     // Save the tab's current URL as the server's last location, but only for real
-    // internal pages (never an external/redirect page, never about:blank).
+    // editable internal pages — never an external/redirect page, never about:blank,
+    // and never a read-only public "share" page.
     private func persistLocation(of tab: WebTab, serverID: UUID) {
-        guard let url = tab.webView.url, tab.server.isInternalPageURL(url) else { return }
+        guard let url = tab.webView.url,
+              tab.server.isInternalPageURL(url),
+              !tab.server.isSharePageURL(url) else { return }
         lastLocationStore.save(url, for: serverID)
     }
 

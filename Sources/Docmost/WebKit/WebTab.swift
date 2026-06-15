@@ -71,6 +71,13 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
         server.isExternalURL(webView.url)
     }
 
+    // Whether to show the in-app Back button: the user is on a page they cannot
+    // navigate back from within Docmost's own UI — an external site, or a read-only
+    // public "share" page on the same domain.
+    var showsBackButton: Bool {
+        isShowingExternalContent || server.isSharePageURL(webView.url)
+    }
+
     func loadIfNeeded() {
         guard !hasLoaded else { return }
         hasLoaded = true
@@ -111,7 +118,15 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
     }
 
     func goBack() {
-        if webView.canGoBack { webView.goBack() }
+        if webView.canGoBack {
+            webView.goBack()
+        } else if showsBackButton {
+            // No history to step back to, but we're on an external or read-only
+            // share page — escape to the server home so the user is never stuck.
+            // Keep `hasLoaded` honest (a load is being issued) so reload() stays correct.
+            hasLoaded = true
+            webView.load(URLRequest(url: server.url))
+        }
     }
 
     func goForward() {

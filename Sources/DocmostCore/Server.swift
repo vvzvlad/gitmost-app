@@ -35,4 +35,12 @@ public extension Server {
               let serverHost = self.url.host else { return false }
         return host.caseInsensitiveCompare(serverHost) == .orderedSame
     }
+
+    /// True when `url` is a Docmost public "share" (published) page on this server —
+    /// an internal page whose path starts with the "/share/" segment. These are
+    /// read-only views with no in-app way back to the editable page.
+    func isSharePageURL(_ url: URL?) -> Bool {
+        guard let url, isInternalPageURL(url) else { return false }
+        return url.path.hasPrefix("/share/")
+    }
 }

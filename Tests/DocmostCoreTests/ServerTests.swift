@@ -59,4 +59,48 @@ final class ServerTests: XCTestCase {
         let s = server("https://docs.example.com")
         XCTAssertFalse(s.isInternalPageURL(nil))
     }
+
+    func testSharePageURLDetected() {
+        let s = server("https://docs.example.com")
+        XCTAssertTrue(s.isSharePageURL(URL(string: "https://docs.example.com/share/hkgh6ful5c/p/analiz-591")))
+    }
+
+    func testEditablePageIsNotShare() {
+        let s = server("https://docs.example.com")
+        XCTAssertFalse(s.isSharePageURL(URL(string: "https://docs.example.com/s/general/p/analiz-591")))
+    }
+
+    func testPageSlugContainingShareWordIsNotShare() {
+        // Only the "/share/" path prefix counts, not a slug that merely contains "share".
+        let s = server("https://docs.example.com")
+        XCTAssertFalse(s.isSharePageURL(URL(string: "https://docs.example.com/s/general/p/share-tips-xyz")))
+    }
+
+    func testSharePageOnDifferentHostIsNotShare() {
+        // A "/share/" path on a foreign host is external, not an internal share page.
+        let s = server("https://docs.example.com")
+        XCTAssertFalse(s.isSharePageURL(URL(string: "https://evil.com/share/abc/p/x")))
+    }
+
+    func testSharePageNilIsFalse() {
+        let s = server("https://docs.example.com")
+        XCTAssertFalse(s.isSharePageURL(nil))
+    }
+
+    func testSharePageURLWithQueryAndFragment() {
+        // URL.path drops query/fragment, so the "/share/" prefix still matches.
+        let s = server("https://docs.example.com")
+        XCTAssertTrue(s.isSharePageURL(URL(string: "https://docs.example.com/share/abc/p/x?token=1")))
+        XCTAssertTrue(s.isSharePageURL(URL(string: "https://docs.example.com/share/abc/p/x#section")))
+    }
+
+    func testShareSegmentWithoutTrailingSlashIsNotShare() {
+        let s = server("https://docs.example.com")
+        XCTAssertFalse(s.isSharePageURL(URL(string: "https://docs.example.com/share")))
+    }
+
+    func testSharePageRejectsNonWebScheme() {
+        let s = server("https://docs.example.com")
+        XCTAssertFalse(s.isSharePageURL(URL(string: "about:blank")))
+    }
 }
