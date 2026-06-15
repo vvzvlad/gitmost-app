@@ -12,6 +12,10 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
     let server: Server
     let webView: WKWebView
 
+    // The URL to load on first display — the server's last visited page when known,
+    // otherwise the server root. Lets a restart reopen where the user left off.
+    private let startURL: URL
+
     // Guards against reloading the start URL on every tab switch.
     private var hasLoaded = false
 
@@ -25,8 +29,9 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
     // Tracks the chosen destination per download so we can reveal it on completion.
     private var downloadDestinations: [ObjectIdentifier: URL] = [:]
 
-    init(server: Server, customJS: String?, customCSS: String?) {
+    init(server: Server, startURL: URL, customJS: String?, customCSS: String?) {
         self.server = server
+        self.startURL = startURL
 
         let configuration = WKWebViewConfiguration()
         configuration.processPool = WebTab.sharedProcessPool
@@ -69,7 +74,7 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
     func loadIfNeeded() {
         guard !hasLoaded else { return }
         hasLoaded = true
-        webView.load(URLRequest(url: server.url))
+        webView.load(URLRequest(url: startURL))
     }
 
     func reload() {
@@ -115,6 +120,9 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
 
     // Stop any in-flight load and detach delegates before this tab is discarded.
     func tearDown() {
+        // Cut every change-notification path before mutating the web view, so a
+        // teardown-induced URL change can never persist a stale location.
+        onNavigationStateChanged = nil
         urlObservation?.invalidate()
         urlObservation = nil
         webView.stopLoading()

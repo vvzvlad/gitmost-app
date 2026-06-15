@@ -38,4 +38,25 @@ final class ServerTests: XCTestCase {
         let s = server("https://docs.example.com")
         XCTAssertFalse(s.isExternalURL(URL(string: "http://docs.example.com:3000/login")))
     }
+
+    func testInternalPageURLSameHost() {
+        let s = server("https://docs.example.com")
+        XCTAssertTrue(s.isInternalPageURL(URL(string: "https://docs.example.com/s/general/p/abc")))
+    }
+
+    func testInternalPageURLDifferentHostIsNotInternal() {
+        let s = server("https://docs.example.com")
+        XCTAssertFalse(s.isInternalPageURL(URL(string: "https://alibaba.com/x")))
+    }
+
+    func testInternalPageURLRejectsNonWebSchemes() {
+        let s = server("https://docs.example.com")
+        XCTAssertFalse(s.isInternalPageURL(URL(string: "about:blank")))
+        XCTAssertFalse(s.isInternalPageURL(URL(string: "file:///tmp/x.html")))
+    }
+
+    func testInternalPageURLNilIsFalse() {
+        let s = server("https://docs.example.com")
+        XCTAssertFalse(s.isInternalPageURL(nil))
+    }
 }

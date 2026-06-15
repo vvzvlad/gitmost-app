@@ -22,4 +22,17 @@ public extension Server {
         guard let host = url?.host, let serverHost = self.url.host else { return false }
         return host.caseInsensitiveCompare(serverHost) != .orderedSame
     }
+
+    /// True when `url` is a real navigable page on this server: same host as the
+    /// server (case-insensitive) and an http/https scheme. Used to decide whether a
+    /// location is worth remembering and restoring. A nil/host-less or non-web URL
+    /// (e.g. `about:blank`, `file:`) returns false.
+    func isInternalPageURL(_ url: URL?) -> Bool {
+        guard let url,
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              let host = url.host,
+              let serverHost = self.url.host else { return false }
+        return host.caseInsensitiveCompare(serverHost) == .orderedSame
+    }
 }

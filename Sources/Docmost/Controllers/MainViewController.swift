@@ -7,6 +7,9 @@ final class MainViewController: NSViewController {
 
     private let store: ServerStore
 
+    // Remembers each server's last visited page so a restart reopens it.
+    private let lastLocationStore = LastLocationStore()
+
     private let tabBar = TabBarView()
     private let contentContainer = NSView()
 
@@ -108,12 +111,19 @@ final class MainViewController: NSViewController {
         if let existing = tabs[id] {
             tab = existing
         } else {
-            tab = WebTab(server: server, customJS: UserScripts.js, customCSS: UserScripts.css)
-            // Toggle the Back button as this tab navigates to/from external sites.
-            // Only act when this tab is the visible one.
+            // Reopen the last visited internal page if we have a valid one; else the root.
+            let startURL = lastLocationStore.load(for: id)
+                .flatMap { server.isInternalPageURL($0) ? $0 : nil } ?? server.url
+            tab = WebTab(server: server, startURL: startURL,
+                         customJS: UserScripts.js, customCSS: UserScripts.css)
             tab.onNavigationStateChanged = { [weak self, weak tab] in
-                guard let self, let tab, self.selectedID == id else { return }
-                self.tabBar.setBackButtonVisible(tab.isShowingExternalContent)
+                guard let self, let tab else { return }
+                // Remember the latest internal location for next launch.
+                self.persistLocation(of: tab, serverID: id)
+                // Toggle the Back button only for the visible tab.
+                if self.selectedID == id {
+                    self.tabBar.setBackButtonVisible(tab.isShowingExternalContent)
+                }
             }
             tabs[id] = tab
         }
@@ -157,6 +167,8 @@ final class MainViewController: NSViewController {
         for (id, tab) in tabs where !validIDs.contains(id) {
             tab.tearDown()
             tabs.removeValue(forKey: id)
+            // Forget its saved location so a recreated server with a new id starts clean.
+            lastLocationStore.remove(for: id)
         }
 
         // Tear down web tabs whose server URL changed so they reload the new address
@@ -165,6 +177,8 @@ final class MainViewController: NSViewController {
             if let tab = tabs[server.id], tab.server.url != server.url {
                 tab.tearDown()
                 tabs.removeValue(forKey: server.id)
+                // The saved page lived on the old host; drop it so we load the new root.
+                lastLocationStore.remove(for: server.id)
             }
         }
 
@@ -234,6 +248,13 @@ final class MainViewController: NSViewController {
 
     @objc func goBack(_ sender: Any?) {
         if let id = selectedID { tabs[id]?.goBack() }
+    }
+
+    // Save the tab's current URL as the server's last location, but only for real
+    // internal pages (never an external/redirect page, never about:blank).
+    private func persistLocation(of tab: WebTab, serverID: UUID) {
+        guard let url = tab.webView.url, tab.server.isInternalPageURL(url) else { return }
+        lastLocationStore.save(url, for: serverID)
     }
 
     @objc func goForward(_ sender: Any?) {
