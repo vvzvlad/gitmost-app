@@ -25,16 +25,7 @@ public enum UserScripts {
         display: none !important;
     }
 
-    /* 2. Remove the Comments panel. The right Aside is shared by Comments,
-          Table of contents and Details, so it is hidden only while it shows the
-          comment tabs. Mantine builds tab ids as "{id}-tab-{value}", so the
-          "Resolved" tab id ends with "-tab-resolved" — unique to the comments
-          panel and present even when that tab is visually hidden elsewhere. */
-    [class*="_aside_"]:has([role="tab"][id*="-tab-resolved"]) {
-        display: none !important;
-    }
-
-    /* 3. Shrink the page tree indentation. The current DocTree applies an inline
+    /* 2. Shrink the page tree indentation. The current DocTree applies an inline
           "padding-left: level * 16px" to each row's ".rowWrapper" wrapper; the
           row's "[role=treeitem]" (with "aria-level = level + 1") sits inside it.
           Target the wrapper via :has() and override per level to an 8px step
@@ -62,25 +53,24 @@ public enum UserScripts {
     """
 
     // Global JS injected into every Docmost server tab.
-    // Currently: hides the paid-only "Resolved" comments UI, which is unavailable.
+    // Currently: hides the unavailable paid-only "Resolve comment" action in the
+    // per-comment menu. Comments themselves stay visible.
     public static let js: String = """
     (function () {
-        // Hide the unavailable paid-only "Resolved" comments UI inside Docmost.
+        // Hide a matched element (the unavailable paid-only resolve action).
         function hide(el) { if (el && el.style) { el.style.display = 'none'; } }
 
-        // Letters-only text, so a count badge ("0Resolved") still matches the tab but
-        // unrelated text ("Unresolved", "5 resolved threads") does not.
+        // Letters-only text, so a label matches regardless of icons/whitespace.
         function letters(el) { return (el.textContent || '').toLowerCase().replace(/[^a-z]/g, ''); }
 
         function sweep() {
             try {
-                // The "Resolved" tab in the comments panel (exact match, ignoring the count).
-                document.querySelectorAll('[role="tab"], .mantine-Tabs-tab').forEach(function (el) {
-                    if (letters(el) === 'resolved') hide(el);
-                });
-                // The "Resolve comment" item in a comment's context menu (disabled, paid-only).
+                // The "Resolve comment" / "Re-open comment" item in a comment's
+                // context menu (Mantine Menu.Item; a paid-only, unavailable action).
+                // Comments stay visible — only this menu entry is removed.
                 document.querySelectorAll('[role="menuitem"], .mantine-Menu-item').forEach(function (el) {
-                    if ((el.textContent || '').trim().toLowerCase().indexOf('resolve comment') !== -1) hide(el);
+                    var t = letters(el);
+                    if (t === 'resolvecomment' || t === 'reopencomment') hide(el);
                 });
             } catch (e) { /* ignore */ }
         }

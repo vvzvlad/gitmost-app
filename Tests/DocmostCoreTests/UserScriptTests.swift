@@ -27,10 +27,10 @@ final class UserScriptTests: XCTestCase {
 
     // MARK: - Embedded global JS
 
-    func testEmbeddedJSHidesResolvedUI() {
-        // The built-in script targets the paid-only resolved-comments UI.
-        XCTAssertTrue(UserScripts.js.contains("resolve comment"))
-        XCTAssertTrue(UserScripts.js.contains("resolved"))
+    func testEmbeddedJSHidesResolveCommentUI() {
+        // The built-in script hides the paid-only "Resolve comment" / "Re-open comment" menu item.
+        XCTAssertTrue(UserScripts.js.contains("resolvecomment"))
+        XCTAssertTrue(UserScripts.js.contains("reopencomment"))
         // It uses a MutationObserver because the menu is rendered on demand.
         XCTAssertTrue(UserScripts.js.contains("MutationObserver"))
     }
@@ -41,8 +41,8 @@ final class UserScriptTests: XCTestCase {
         let css = UserScripts.css
         // Hides the space sidebar action menu (Overview / Search / Space settings / New page).
         XCTAssertTrue(css.contains("_menuItems_"))
-        // Hides the comments panel via the Mantine "Resolved" tab id.
-        XCTAssertTrue(css.contains("-tab-resolved"))
+        // The comments panel must stay visible: the old "-tab-resolved" hide rule is gone.
+        XCTAssertFalse(css.contains("-tab-resolved"))
         // Shrinks the page tree indentation via per-level aria-level overrides.
         XCTAssertTrue(css.contains("[role=\"treeitem\"][aria-level=\"2\"]"))
     }
