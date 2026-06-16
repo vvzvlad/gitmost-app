@@ -10,7 +10,7 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
     private static let sharedProcessPool = WKProcessPool()
 
     let server: Server
-    let webView: WKWebView
+    let webView: DragImportWebView
 
     // The URL to load on first display — the server's last visited page when known,
     // otherwise the server root. Lets a restart reopen where the user left off.
@@ -45,7 +45,7 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
         WebTab.installUserScripts(into: controller, js: customJS, css: customCSS)
         configuration.userContentController = controller
 
-        self.webView = WKWebView(frame: .zero, configuration: configuration)
+        self.webView = DragImportWebView(frame: .zero, configuration: configuration)
 
         super.init()
 
@@ -53,6 +53,10 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
         webView.allowsBackForwardNavigationGestures = true
         webView.navigationDelegate = self
         webView.uiDelegate = self
+
+        webView.onMarkdownFilesDropped = { [weak self] urls in
+            self?.importMarkdownFiles(urls)
+        }
 
         // Notify the UI when the current location changes so it can show a Back
         // button while foreign (non-server) content is displayed. KVO on `url`
@@ -144,6 +148,89 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
         webView.navigationDelegate = nil
         webView.uiDelegate = nil
         webView.removeFromSuperview()
+    }
+
+    // MARK: - Markdown drag-and-drop import
+
+    // Imports Markdown files dropped on the web view as Docmost pages, into the space
+    // currently open in this tab. Runs as JavaScript in the page via callAsyncJavaScript,
+    // so it authenticates with the page's own session cookie and needs no cookie handling.
+    private func importMarkdownFiles(_ urls: [URL]) {
+        // The import endpoint needs a target space; derive it from the live URL.
+        guard let path = webView.url?.path,
+              let slug = MarkdownImport.spaceSlug(fromPath: path) else {
+            presentImportAlert(title: "Can't import here",
+                               text: "Open a space, then drop Markdown files to import them as pages.")
+            return
+        }
+
+        // Read each file into a base64 payload for the web view; collect read errors.
+        var files: [[String: String]] = []
+        var errors: [String] = []
+        for url in urls {
+            do {
+                let data = try Data(contentsOf: url)
+                if data.count > MarkdownImport.maxFileSize {
+                    errors.append("\(url.lastPathComponent): file is too large")
+                    continue
+                }
+                files.append(["name": url.lastPathComponent, "b64": data.base64EncodedString()])
+            } catch {
+                errors.append("\(url.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
+
+        guard !files.isEmpty else {
+            presentImportAlert(title: "Import failed", text: errors.joined(separator: "\n"))
+            return
+        }
+
+        let arguments: [String: Any] = ["slug": slug, "files": files]
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let value = try await self.webView.callAsyncJavaScript(MarkdownImport.importMarkdownJS,
+                                                                       arguments: arguments,
+                                                                       in: nil,
+                                                                       contentWorld: .page)
+                self.handleImportResult(value, readErrors: errors)
+            } catch {
+                self.presentImportAlert(title: "Import failed", text: error.localizedDescription)
+            }
+        }
+    }
+
+    // Reloads the tab when anything imported (so the page tree shows the new pages) and
+    // surfaces any per-file failures.
+    private func handleImportResult(_ value: Any?, readErrors: [String]) {
+        var imported = 0
+        var errors = readErrors
+        if let dict = value as? [String: Any] {
+            imported = (dict["imported"] as? NSNumber)?.intValue ?? 0
+            if let jsErrors = dict["errors"] as? [String] { errors.append(contentsOf: jsErrors) }
+        }
+
+        if imported > 0 { reload() }
+
+        if !errors.isEmpty {
+            let noun = imported == 1 ? "page" : "pages"
+            let title = imported > 0 ? "Import finished with errors" : "Import failed"
+            let prefix = imported > 0 ? "Imported \(imported) \(noun), but some files failed:\n" : ""
+            presentImportAlert(title: title, text: prefix + errors.joined(separator: "\n"))
+        }
+    }
+
+    // Shows a native alert, as a sheet on the web view's window when available.
+    private func presentImportAlert(title: String, text: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = text
+        alert.alertStyle = .warning
+        if let window = webView.window {
+            alert.beginSheetModal(for: window, completionHandler: nil)
+        } else {
+            alert.runModal()
+        }
     }
 
     // MARK: - WKUIDelegate
