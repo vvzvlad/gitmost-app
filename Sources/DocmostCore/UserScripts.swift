@@ -50,11 +50,22 @@ public enum UserScripts {
     [class*="_rowWrapper_"]:has([role="treeitem"][aria-level="18"]) { padding-left: 136px !important; }
     [class*="_rowWrapper_"]:has([role="treeitem"][aria-level="19"]) { padding-left: 144px !important; }
     [class*="_rowWrapper_"]:has([role="treeitem"][aria-level="20"]) { padding-left: 152px !important; }
+
+    /* 3. Hide the paid-only page-header "verification" action button. It is a
+          Mantine ActionIcon whose aria-label contains "verification" (e.g.
+          "Add verification — Available with a paid license"). Matching the
+          aria-label substring is stable across rebuilds (no CSS-module hash).
+          The case-insensitive flag covers all label states. */
+    [aria-label*="verification" i] {
+        display: none !important;
+    }
     """
 
     // Global JS injected into every Docmost server tab.
-    // Currently: hides the unavailable paid-only "Resolve comment" action in the
-    // per-comment menu. Comments themselves stay visible.
+    // Hides several unavailable paid-only UI surfaces: the "Resolve comment"
+    // action in the per-comment menu, the "Add/Edit verification" item in the
+    // page actions menu, and the "Templates" entries in both the space actions
+    // menu and the top-level navigation. Comments themselves stay visible.
     public static let js: String = """
     (function () {
         // Hide a matched element (the unavailable paid-only resolve action).
@@ -71,6 +82,19 @@ public enum UserScripts {
                 document.querySelectorAll('[role="menuitem"], .mantine-Menu-item').forEach(function (el) {
                     var t = letters(el);
                     if (t === 'resolvecomment' || t === 'reopencomment') hide(el);
+                    // Paid-only "Add verification" / "Edit verification" item in the page actions menu.
+                    if (t.indexOf('verification') !== -1) hide(el);
+                    // Paid-only "Templates" item in the space actions menu.
+                    if (t === 'templates') hide(el);
+                });
+
+                // Paid-only "Templates" entry in the top-level navigation
+                // (Home / Favorites / Spaces / Templates). It renders as a nav link
+                // whose only text is "Templates". Scope to the navbar so a user page
+                // or item literally named "Templates" elsewhere is not hidden, and
+                // match the exact text so the other nav links stay untouched.
+                document.querySelectorAll('[class*="_navbar_"] [class*="_link_"]').forEach(function (el) {
+                    if (letters(el) === 'templates') hide(el);
                 });
             } catch (e) { /* ignore */ }
         }

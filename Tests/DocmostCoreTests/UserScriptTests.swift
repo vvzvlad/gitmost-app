@@ -35,6 +35,21 @@ final class UserScriptTests: XCTestCase {
         XCTAssertTrue(UserScripts.js.contains("MutationObserver"))
     }
 
+    func testEmbeddedJSHidesPaidVerificationAndTemplatesUI() {
+        let js = UserScripts.js
+        // Hides the paid-only "Add/Edit verification" menu item (tied to the code, not a comment).
+        XCTAssertTrue(js.contains("indexOf('verification')"))
+        // Hides the paid-only "Templates" menu item (exact text match).
+        XCTAssertTrue(js.contains("'templates'"))
+        // The top-level nav "Templates" link is matched within the navbar scope.
+        XCTAssertTrue(js.contains("[class*=\"_navbar_\"] [class*=\"_link_\"]"))
+    }
+
+    func testEmbeddedCSSHidesVerificationButton() {
+        // The page-header verification ActionIcon is matched by its aria-label.
+        XCTAssertTrue(UserScripts.css.contains("aria-label*=\"verification\""))
+    }
+
     // MARK: - Embedded global CSS
 
     func testEmbeddedCSSAppliesUICustomizations() {
