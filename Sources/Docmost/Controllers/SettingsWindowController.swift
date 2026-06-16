@@ -10,6 +10,9 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private let removeButton = NSButton()
     private let editButton = NSButton()
 
+    // Private pasteboard type used only for intra-table drag-to-reorder of servers.
+    private let serverRowType = NSPasteboard.PasteboardType("com.docmost.settings.server-row")
+
     init(store: ServerStore) {
         self.store = store
 
@@ -64,6 +67,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         tableView.usesAlternatingRowBackgroundColors = true
         tableView.target = self
         tableView.doubleAction = #selector(editSelected)
+        tableView.registerForDraggedTypes([serverRowType])
+        tableView.draggingDestinationFeedbackStyle = .gap
         scrollView.documentView = tableView
 
         // Action buttons.
@@ -145,6 +150,42 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
     func tableViewSelectionDidChange(_ notification: Notification) {
         updateButtonState()
+    }
+
+    // MARK: - Drag-to-reorder
+
+    func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
+        // Encode the source row so acceptDrop knows which server is being moved.
+        let item = NSPasteboardItem()
+        item.setString(String(row), forType: serverRowType)
+        return item
+    }
+
+    func tableView(_ tableView: NSTableView,
+                   validateDrop info: NSDraggingInfo,
+                   proposedRow row: Int,
+                   proposedDropOperation dropOperation: NSTableView.DropOperation) -> NSDragOperation {
+        // Allow dropping only between rows (a gap), never onto a row.
+        return dropOperation == .above ? .move : []
+    }
+
+    func tableView(_ tableView: NSTableView,
+                   acceptDrop info: NSDraggingInfo,
+                   row: Int,
+                   dropOperation: NSTableView.DropOperation) -> Bool {
+        guard let item = info.draggingPasteboard.pasteboardItems?.first,
+              let raw = item.string(forType: serverRowType),
+              let sourceRow = Int(raw) else { return false }
+        // Ignore drops that would not change the order (same slot, or the gap right after itself).
+        guard sourceRow != row, sourceRow != row - 1 else { return false }
+
+        // Remember the dragged server so we can keep it selected after the reload.
+        let movedID = store.servers.indices.contains(sourceRow) ? store.servers[sourceRow].id : nil
+        store.move(from: sourceRow, to: row)   // posts .serversDidChange -> reloadTable()
+        if let movedID, let newIndex = store.servers.firstIndex(where: { $0.id == movedID }) {
+            tableView.selectRowIndexes(IndexSet(integer: newIndex), byExtendingSelection: false)
+        }
+        return true
     }
 
     private func updateButtonState() {

@@ -114,6 +114,58 @@ final class ServerStoreTests: XCTestCase {
         XCTAssertEqual(store.servers.first?.name, "docs.example.com")
     }
 
+    // MARK: - move (reorder)
+
+    func testMoveForwardReordersAndPersists() {
+        let suite = makeSuite()
+        let store = ServerStore(defaults: suite)
+        store.add(name: "A", urlString: "https://a.test")
+        store.add(name: "B", urlString: "https://b.test")
+        store.add(name: "C", urlString: "https://c.test")
+
+        // Drag A (row 0) to the gap after C (NSTableView drop index 3) -> [B, C, A].
+        store.move(from: 0, to: 3)
+        XCTAssertEqual(store.servers.map { $0.name }, ["B", "C", "A"])
+
+        // The new order must survive a reload from the same defaults suite.
+        let reloaded = ServerStore(defaults: suite)
+        XCTAssertEqual(reloaded.servers.map { $0.name }, ["B", "C", "A"])
+    }
+
+    func testMoveBackwardReorders() {
+        let suite = makeSuite()
+        let store = ServerStore(defaults: suite)
+        store.add(name: "A", urlString: "https://a.test")
+        store.add(name: "B", urlString: "https://b.test")
+        store.add(name: "C", urlString: "https://c.test")
+
+        // Drag C (row 2) to the gap before A (drop index 0) -> [C, A, B].
+        store.move(from: 2, to: 0)
+        XCTAssertEqual(store.servers.map { $0.name }, ["C", "A", "B"])
+    }
+
+    func testMoveToOwnSlotIsNoOp() {
+        let suite = makeSuite()
+        let store = ServerStore(defaults: suite)
+        store.add(name: "A", urlString: "https://a.test")
+        store.add(name: "B", urlString: "https://b.test")
+
+        // Dropping into the gap right after itself must not change the order.
+        store.move(from: 0, to: 1)
+        XCTAssertEqual(store.servers.map { $0.name }, ["A", "B"])
+    }
+
+    func testMoveIgnoresOutOfBoundsIndexes() {
+        let suite = makeSuite()
+        let store = ServerStore(defaults: suite)
+        store.add(name: "A", urlString: "https://a.test")
+        store.add(name: "B", urlString: "https://b.test")
+
+        store.move(from: 5, to: 0)   // invalid source index
+        store.move(from: 0, to: 9)   // invalid destination index
+        XCTAssertEqual(store.servers.map { $0.name }, ["A", "B"])
+    }
+
     // MARK: - Notification
 
     func testAddPostsNotification() {
