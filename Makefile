@@ -1,8 +1,10 @@
 # Makefile — single entry point for all routine project actions.
 # Run `make` or `make help` to list targets.
 
-APP_NAME  := Docmost
-BUNDLE_ID := xyz.vvzvlad.docmost
+APP_NAME  := gitmost
+# SPM executable product name (internal; not renamed).
+BIN_NAME  := Docmost
+BUNDLE_ID := xyz.vvzvlad.gitmost
 APP       := $(APP_NAME).app
 
 .DEFAULT_GOAL := help
@@ -25,14 +27,14 @@ icon: ## (Re)generate the app icon (Resources/AppIcon.icns)
 	swift scripts/make-icon.swift
 
 .PHONY: build
-build: ## Build a release Docmost.app bundle (compile + assemble + ad-hoc sign)
+build: ## Build a release gitmost.app bundle (compile + assemble + ad-hoc sign)
 	@echo "==> Building release binary..."
 	swift build -c release
 	@test -f Resources/AppIcon.icns || swift scripts/make-icon.swift
 	@echo "==> Assembling $(APP)..."
 	rm -rf "$(APP)"
 	mkdir -p "$(APP)/Contents/MacOS" "$(APP)/Contents/Resources"
-	cp ".build/release/$(APP_NAME)" "$(APP)/Contents/MacOS/$(APP_NAME)"
+	cp ".build/release/$(BIN_NAME)" "$(APP)/Contents/MacOS/$(APP_NAME)"
 	cp Resources/AppIcon.icns "$(APP)/Contents/Resources/AppIcon.icns"
 	@printf '%s\n' \
 		'<?xml version="1.0" encoding="UTF-8"?>' \
@@ -76,7 +78,7 @@ build: ## Build a release Docmost.app bundle (compile + assemble + ad-hoc sign)
 	@echo "==> Done. Created $(APP) (run: open $(APP))"
 
 .PHONY: run
-run: build ## Build and launch Docmost.app
+run: build ## Build and launch gitmost.app
 	open "$(APP)"
 
 .PHONY: clean

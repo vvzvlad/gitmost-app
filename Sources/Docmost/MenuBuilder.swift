@@ -3,7 +3,7 @@ import AppKit
 // Builds and installs the application's main menu programmatically.
 // User-facing titles are in English. Standard selectors with nil targets are used
 // for Edit/View items so they route through the responder chain to the focused view
-// (this is what makes copy/paste work inside the Docmost web forms).
+// (this is what makes copy/paste work inside the gitmost web forms).
 enum MenuBuilder {
 
     static func installMainMenu() {
@@ -30,12 +30,12 @@ enum MenuBuilder {
         let item = NSMenuItem()
         let menu = NSMenu()
 
-        menu.addItem(withTitle: "About Docmost",
+        menu.addItem(withTitle: "About gitmost",
                      action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
                      keyEquivalent: "")
         menu.addItem(.separator())
 
-        menu.addItem(withTitle: "Hide Docmost",
+        menu.addItem(withTitle: "Hide gitmost",
                      action: #selector(NSApplication.hide(_:)),
                      keyEquivalent: "h")
 
@@ -50,7 +50,7 @@ enum MenuBuilder {
                      keyEquivalent: "")
         menu.addItem(.separator())
 
-        menu.addItem(withTitle: "Quit Docmost",
+        menu.addItem(withTitle: "Quit gitmost",
                      action: #selector(NSApplication.terminate(_:)),
                      keyEquivalent: "q")
 

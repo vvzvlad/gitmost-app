@@ -27,8 +27,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build app bundle
         run: make build
-      - name: Upload Docmost.app
+      - name: Upload gitmost.app
         uses: actions/upload-artifact@v4
         with:
-          name: Docmost-app
-          path: Docmost.app
+          name: gitmost-app
+          path: gitmost.app

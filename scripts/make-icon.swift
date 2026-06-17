@@ -14,58 +14,52 @@ func drawIcon(_ px: Int) -> CGImage {
                         bytesPerRow: 0, space: cs,
                         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
     ctx.interpolationQuality = .high
+    ctx.setShouldAntialias(true)
 
-    // 1) Squircle body with margin (macOS icon grid leaves padding around the body).
-    let margin = s * 0.09
-    let body = CGRect(x: margin, y: margin, width: s - 2*margin, height: s - 2*margin)
-    let bodyRadius = body.width * 0.2237
-    ctx.saveGState()
-    ctx.addPath(roundedPath(body, bodyRadius))
-    ctx.clip()
-    let top = CGColor(srgbRed: 0.922, green: 0.737, blue: 0.275, alpha: 1)    // #ebbc46
-    let bottom = CGColor(srgbRed: 0.898, green: 0.671, blue: 0.098, alpha: 1) // #e5ab19
-    let grad = CGGradient(colorsSpace: cs, colors: [top, bottom] as CFArray, locations: [0, 1])!
-    ctx.drawLinearGradient(grad, start: CGPoint(x: 0, y: body.maxY), end: CGPoint(x: 0, y: body.minY), options: [])
-    ctx.restoreGState()
+    // Reproduces Resources/gitmost-icon.svg: a dark rounded square with the
+    // gitmost "git graph" mark. The mark lives in a 96-unit space, placed by the
+    // SVG transform translate(128,128) scale(2.15) translate(-48,-48) on a 256 canvas.
+    let f = s / 256.0   // canvas scale: icon px per SVG-256 unit
+    let k = f * 2.15    // mark scale: icon px per mark unit
 
-    // 2) White document card with a soft shadow.
-    let docW = body.width * 0.52
-    let docH = body.height * 0.60
-    let docRect = CGRect(x: body.midX - docW/2, y: body.midY - docH/2, width: docW, height: docH)
-    let docRadius = docW * 0.10
-    ctx.saveGState()
-    ctx.setShadow(offset: CGSize(width: 0, height: -s*0.012), blur: s*0.03,
-                  color: CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.25))
-    ctx.addPath(roundedPath(docRect, docRadius))
-    ctx.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
-    ctx.fillPath()
-    ctx.restoreGState()
-
-    // 3) Two tabs along the top edge of the document.
-    let tabH = docH * 0.12
-    let tabW = docW * 0.26
-    let tabY = docRect.maxY - tabH * 0.5
-    let tabColors = [CGColor(srgbRed: 0.898, green: 0.671, blue: 0.098, alpha: 1),
-                     CGColor(srgbRed: 0.78,  green: 0.56,  blue: 0.08,  alpha: 1)]
-    for i in 0..<2 {
-        let tx = docRect.minX + docW*0.10 + CGFloat(i)*(tabW + docW*0.06)
-        let tr = CGRect(x: tx, y: tabY, width: tabW, height: tabH)
-        ctx.addPath(roundedPath(tr, tabH*0.35))
-        ctx.setFillColor(tabColors[i])
-        ctx.fillPath()
+    // Map a point in the 96-unit mark space to the CG (y-up) pixel canvas.
+    // The CGContext here is NOT flipped, so convert the SVG y-down value to y-up.
+    func P(_ mx: CGFloat, _ my: CGFloat) -> CGPoint {
+        let x = f * (128 + 2.15 * (mx - 48))
+        let yDown = f * (128 + 2.15 * (my - 48))
+        return CGPoint(x: x, y: s - yDown)
     }
 
-    // 4) Four light-gray text lines (last one shorter).
-    ctx.setFillColor(CGColor(srgbRed: 0.80, green: 0.82, blue: 0.85, alpha: 1))
-    let lineH = docH * 0.055
-    let lineX = docRect.minX + docW*0.14
-    let lineW = docW * 0.72
-    let startY = docRect.maxY - docH*0.34
-    for i in 0..<4 {
-        let ly = startY - CGFloat(i)*(lineH*2.1)
-        let w = (i == 3) ? lineW*0.6 : lineW
-        ctx.addPath(roundedPath(CGRect(x: lineX, y: ly, width: w, height: lineH), lineH/2))
-        ctx.fillPath()
+    // 1) Dark rounded-square background (#0E1117), corner radius 60 on a 256 canvas.
+    let bg = CGRect(x: 0, y: 0, width: s, height: s)
+    ctx.addPath(roundedPath(bg, s * 60.0 / 256.0))
+    ctx.setFillColor(CGColor(srgbRed: 0x0E/255.0, green: 0x11/255.0, blue: 0x17/255.0, alpha: 1))
+    ctx.fillPath()
+
+    // 2) Light strokes (#E6EDF3): a vertical stem and a quarter-circle arc.
+    ctx.setStrokeColor(CGColor(srgbRed: 0xE6/255.0, green: 0xED/255.0, blue: 0xF3/255.0, alpha: 1))
+    ctx.setLineWidth(9 * k)
+    ctx.setLineCap(.round)
+
+    // Vertical stem: mark (24,12) -> (24,60).
+    ctx.beginPath()
+    ctx.move(to: P(24, 12))
+    ctx.addLine(to: P(24, 60))
+    ctx.strokePath()
+
+    // Quarter arc, center mark (36,36), radius 36, from (72,36) down to (36,72).
+    // The context is y-up, so a visually clockwise arc (bulging toward the
+    // bottom-right) runs from angle 0 to -pi/2.
+    ctx.beginPath()
+    ctx.addArc(center: P(36, 36), radius: 36 * k,
+               startAngle: 0, endAngle: -CGFloat.pi / 2, clockwise: true)
+    ctx.strokePath()
+
+    // 3) Two green nodes (#3FB950), drawn on top of the stroke ends.
+    ctx.setFillColor(CGColor(srgbRed: 0x3F/255.0, green: 0xB9/255.0, blue: 0x50/255.0, alpha: 1))
+    for c in [P(72, 24), P(24, 72)] {
+        let r = 12 * k
+        ctx.fillEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r))
     }
 
     return ctx.makeImage()!

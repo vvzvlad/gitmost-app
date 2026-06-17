@@ -1,8 +1,8 @@
 [Русская версия](README.ru.md)
 
-# Docmost
+# gitmost
 
-A native macOS app that embeds the [Docmost](https://docmost.com/) web UI for
+A native macOS app that embeds the gitmost web UI for
 several of your own servers. Each server is a tab in a single window; switching
 tabs switches servers, and sessions (logins) persist across launches.
 
@@ -21,15 +21,15 @@ make run
 ```
 
 `make build` builds the release binary with Swift Package Manager and wraps it
-into `Docmost.app` with a correct `Info.plist` and an app icon, then ad-hoc signs
+into `gitmost.app` with a correct `Info.plist` and an app icon, then ad-hoc signs
 the bundle. `make run` builds the app and launches it.
 
 You can also run the steps directly:
 
 ```sh
 swift build       # SwiftPM debug build, no .app bundle
-make build        # full release build and packaging into Docmost.app
-open Docmost.app  # launch the built app
+make build        # full release build and packaging into gitmost.app
+open gitmost.app  # launch the built app
 ```
 
 ## Adding servers
@@ -51,14 +51,10 @@ automatically. The server list is stored locally.
 
 ## Built-in JS/CSS
 
-The app ships with built-in JavaScript and CSS that are compiled into the
-program and injected into every server tab. There is no external folder or
-editable file. Currently the built-in script hides the unavailable paid-only
-"Resolved" comments UI (the "Resolved" tab in the comments panel and the
-disabled "Resolve comment" context-menu item).
-
-To change the injected JS/CSS, edit the embedded `js`/`css` constants in
-`Sources/DocmostCore/UserScripts.swift` and rebuild.
+The app no longer injects any custom JavaScript or CSS — it shows the web UI
+exactly as the server delivers it. The `js`/`css` constants in
+`Sources/DocmostCore/UserScripts.swift` are now empty and remain only as an
+extension point if custom injection is needed in the future.
 
 ## Development
 
@@ -67,8 +63,8 @@ All routine actions go through `make` (see `make help`):
 | Command      | Purpose                                               |
 |--------------|-------------------------------------------------------|
 | `make`       | Show the list of targets (same as `make help`)        |
-| `make build` | Release build of `Docmost.app` (compile+bundle+sign)  |
-| `make run`   | Build and launch `Docmost.app`                        |
+| `make build` | Release build of `gitmost.app` (compile+bundle+sign)  |
+| `make run`   | Build and launch `gitmost.app`                        |
 | `make test`  | Run the unit tests (`swift test`)                     |
 | `make debug` | SwiftPM debug build (no `.app`)                       |
 | `make icon`  | Regenerate the app icon (`Resources/AppIcon.icns`)    |
