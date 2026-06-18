@@ -45,6 +45,15 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
         WebTab.installUserScripts(into: controller, js: customJS, css: customCSS)
         configuration.userContentController = controller
 
+        // Present as Safari so web libraries that special-case "macOS WebView" user
+        // agents behave like in a real browser. Docmost's page export uses file-saver,
+        // whose isMacOSWebView branch (taken when the UA lacks a "Safari" token) opens a
+        // blank popup and falls back to a data: URL — which blanked the tab. A Safari UA
+        // routes export through the normal <a download href="blob:…"> path, which both
+        // downloads correctly (blob downloads work on macOS 14 / WebKit 17.3+) and keeps
+        // the real filename. applicationNameForUserAgent is appended to the default UA.
+        configuration.applicationNameForUserAgent = "Version/17.6 Safari/605.1.15"
+
         self.webView = DragImportWebView(frame: .zero, configuration: configuration)
 
         super.init()
@@ -239,8 +248,14 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
                  createWebViewWith configuration: WKWebViewConfiguration,
                  for navigationAction: WKNavigationAction,
                  windowFeatures: WKWindowFeatures) -> WKWebView? {
-        // target=_blank / window.open: load in the same web view instead of a dead window.
-        if navigationAction.targetFrame == nil {
+        // target=_blank / window.open: load real targets in the same web view instead of a
+        // dead window. Skip blank/empty targets (e.g. window.open('', '_blank')): loading
+        // about:blank into the main web view would replace the current page with a blank
+        // screen.
+        if navigationAction.targetFrame == nil,
+           let url = navigationAction.request.url,
+           !url.absoluteString.isEmpty,
+           url.absoluteString != "about:blank" {
             webView.load(navigationAction.request)
         }
         return nil
@@ -275,6 +290,14 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
     func webView(_ webView: WKWebView,
                  decidePolicyFor navigationAction: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        // A navigation that WebKit flags as a download (e.g. an <a download> link such as
+        // the blob URL file-saver uses for Docmost's export). Hand it to WKDownloadDelegate
+        // instead of loading it into the frame, which would blank the page.
+        if navigationAction.shouldPerformDownload {
+            decisionHandler(.download)
+            return
+        }
+
         // Only intercept explicit link clicks to a different host; let redirects and
         // form submits through so SSO/OAuth flows to other hosts keep working.
         if navigationAction.navigationType == .linkActivated,
