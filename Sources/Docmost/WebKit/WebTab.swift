@@ -285,6 +285,20 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
         }
     }
 
+    // getUserMedia (e.g. Docmost's voice recording) asks WebKit for microphone/camera
+    // access through this delegate. If it is not implemented WebKit denies the request
+    // outright. Grant capture for the app's trusted Docmost content; the first real use
+    // still triggers the system's microphone/camera prompt, which is gated by the
+    // NSMicrophoneUsageDescription / NSCameraUsageDescription keys in Info.plist.
+    // Available since macOS 12; the app targets macOS 14, so no availability guard.
+    func webView(_ webView: WKWebView,
+                 requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+                 initiatedByFrame frame: WKFrameInfo,
+                 type: WKMediaCaptureType,
+                 decisionHandler: @escaping (WKPermissionDecision) -> Void) {
+        decisionHandler(.grant)
+    }
+
     // MARK: - WKNavigationDelegate
 
     func webView(_ webView: WKWebView,

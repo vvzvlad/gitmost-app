@@ -65,6 +65,10 @@ build: ## Build a release gitmost.app bundle (compile + assemble + ad-hoc sign)
 		'    <string>NSApplication</string>' \
 		'    <key>NSHighResolutionCapable</key>' \
 		'    <true/>' \
+		'    <key>NSMicrophoneUsageDescription</key>' \
+		'    <string>gitmost needs microphone access so you can record audio in the Docmost web interface.</string>' \
+		'    <key>NSCameraUsageDescription</key>' \
+		'    <string>gitmost needs camera access for video capture in the Docmost web interface.</string>' \
 		'    <key>NSAppTransportSecurity</key>' \
 		'    <dict>' \
 		'        <key>NSAllowsArbitraryLoads</key>' \
