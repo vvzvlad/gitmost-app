@@ -195,7 +195,10 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
         }
 
         let arguments: [String: Any] = ["slug": slug, "files": files]
-        Task { @MainActor [weak self] in
+        // Capture `errors` by value (not by reference) in the Task's capture list: Swift
+        // forbids referencing a captured `var` from concurrently-executing code. This is
+        // safe because the array is a value type fully built before the Task is created.
+        Task { @MainActor [weak self, errors] in
             guard let self else { return }
             do {
                 let value = try await self.webView.callAsyncJavaScript(MarkdownImport.importMarkdownJS,
