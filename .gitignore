@@ -1,5 +1,4 @@
 .build/
-Docmost.app/
 *.xcodeproj
 .DS_Store
 .swiftpm/
