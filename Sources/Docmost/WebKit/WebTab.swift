@@ -63,6 +63,16 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
         webView.navigationDelegate = self
         webView.uiDelegate = self
 
+        // Allow attaching Safari's Web Inspector (Develop ▸ <app> ▸ Web Inspector)
+        // to this web view. WKWebView-only failures — e.g. a streaming
+        // /api/ai-chat/stream SSE that the UI surfaces as the opaque "Load failed"
+        // — are otherwise undiagnosable here (the browser exposes no detail); the
+        // inspector's Console + Network tab show the real NSURLError, bytes
+        // received and timing. macOS 13.3+ (the app targets macOS 14). Consider
+        // gating this behind a debug build flag before shipping if inspector
+        // access should not be exposed in release builds.
+        webView.isInspectable = true
+
         webView.onMarkdownFilesDropped = { [weak self] urls in
             self?.importMarkdownFiles(urls)
         }
