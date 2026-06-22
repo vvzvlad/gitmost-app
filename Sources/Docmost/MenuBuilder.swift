@@ -71,6 +71,20 @@ enum MenuBuilder {
         addServer.target = nil
         menu.addItem(addServer)
 
+        menu.addItem(.separator())
+
+        // Meeting recording (system audio + microphone). The dynamic title
+        // (Start/Stop) is set by MainViewController.validateMenuItem. ⌘⇧R avoids
+        // clashing with View ▸ Reload (⌘R). nil target -> responder chain.
+        let record = NSMenuItem(title: "Start Recording",
+                                action: #selector(MainViewController.toggleRecording(_:)),
+                                keyEquivalent: "r")
+        record.keyEquivalentModifierMask = [.command, .shift]
+        record.target = nil
+        menu.addItem(record)
+
+        menu.addItem(.separator())
+
         menu.addItem(withTitle: "Close Window",
                      action: #selector(NSWindow.performClose(_:)),
                      keyEquivalent: "w")

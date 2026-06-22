@@ -242,6 +242,105 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
         }
     }
 
+    // MARK: - Recording delivery
+
+    // Delivers a recorded .m4a into the live page via the gitmost JS bridge
+    // (window.gitmost.insertRecording). Mirrors importMarkdownFiles(_:): the file is
+    // read into base64 and handed to the page's own session via callAsyncJavaScript in
+    // the .page content world. If the bridge is missing or reports a failure, the file
+    // is saved to Downloads and revealed in Finder instead.
+    func insertRecording(fileURL: URL) {
+        // Read + base64-encode off the main thread: recordings can be tens/hundreds of MB
+        // and this method is called on the main thread, so doing it inline would freeze the
+        // UI. Hop back to the main thread for the WebKit bridge probe / fallback.
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let base64: String
+            do {
+                base64 = try Data(contentsOf: fileURL).base64EncodedString()
+            } catch {
+                DispatchQueue.main.async {
+                    self?.recordingFallback(
+                        fileURL: fileURL,
+                        reason: "Could not read the recording: \(error.localizedDescription)")
+                }
+                return
+            }
+
+            DispatchQueue.main.async {
+                self?.deliverRecording(fileURL: fileURL, base64: base64)
+            }
+        }
+    }
+
+    // Runs on the main thread. Probes the in-page bridge and inserts the recording via it,
+    // falling back to Downloads when the bridge is missing or reports a failure.
+    @MainActor
+    private func deliverRecording(fileURL: URL, base64: String) {
+        let arguments: [String: Any] = [
+            "base64": base64,
+            "filename": fileURL.lastPathComponent,
+            "mimeType": RecordingSupport.mimeType
+        ]
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                // 1. Probe the bridge in the page world.
+                let available = try await self.webView.callAsyncJavaScript(
+                    RecordingSupport.bridgeAvailabilityJS,
+                    arguments: [:], in: nil, contentWorld: .page)
+                guard (available as? Bool) == true else {
+                    self.recordingFallback(fileURL: fileURL,
+                                           reason: "The open page does not support in-app recording insertion yet.")
+                    return
+                }
+
+                // 2. Invoke the bridge; it resolves with { ok, error?, message? }.
+                let result = try await self.webView.callAsyncJavaScript(
+                    RecordingSupport.insertRecordingJS,
+                    arguments: arguments, in: nil, contentWorld: .page)
+
+                if let dict = result as? [String: Any], (dict["ok"] as? Bool) == true {
+                    // Success: the audio block appears in the page; show no modal.
+                    // The bytes are now safely in the page, so drop the temp source file
+                    // (its base64 was produced before this method ran) to avoid a /tmp leak.
+                    try? FileManager.default.removeItem(at: fileURL)
+                    return
+                }
+
+                // 3. Bridge returned not-ok: fall back with the server-provided message.
+                let dict = result as? [String: Any]
+                let message = (dict?["message"] as? String)
+                    ?? (dict?["error"] as? String)
+                    ?? "Inserting the recording into the page failed."
+                self.recordingFallback(fileURL: fileURL, reason: message)
+            } catch {
+                self.recordingFallback(fileURL: fileURL, reason: error.localizedDescription)
+            }
+        }
+    }
+
+    // Saves the recording to Downloads, reveals it in Finder, and explains why in-page
+    // insertion did not happen.
+    private func recordingFallback(fileURL: URL, reason: String) {
+        let destination = Self.downloadsDestination(for: fileURL.lastPathComponent)
+        do {
+            // Copy (not move): the copy must succeed before we touch the temp source.
+            try FileManager.default.copyItem(at: fileURL, to: destination)
+            NSWorkspace.shared.activateFileViewerSelecting([destination])
+            // The bytes are safely in Downloads (the user's kept copy), so remove the
+            // temp original to avoid a /tmp leak.
+            try? FileManager.default.removeItem(at: fileURL)
+            presentImportAlert(
+                title: "Recording saved to Downloads",
+                text: "\(reason)\n\nThe recording was saved to your Downloads folder instead.")
+        } catch {
+            presentImportAlert(
+                title: "Recording could not be saved",
+                text: "\(reason)\n\nSaving to Downloads also failed: \(error.localizedDescription)")
+        }
+    }
+
     // Shows a native alert, as a sheet on the web view's window when available.
     private func presentImportAlert(title: String, text: String) {
         let alert = NSAlert()
@@ -368,6 +467,16 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
                   decideDestinationUsing response: URLResponse,
                   suggestedFilename: String,
                   completionHandler: @escaping (URL?) -> Void) {
+        let destination = Self.downloadsDestination(for: suggestedFilename)
+        downloadDestinations[ObjectIdentifier(download)] = destination
+        completionHandler(destination)
+    }
+
+    // Resolves a collision-free destination in the user's Downloads directory for a
+    // suggested file name. Adds a numeric suffix (e.g. "file 1.pdf") when a file with
+    // the same name already exists. Shared by WKDownloadDelegate and the recording
+    // fallback so both place files identically.
+    static func downloadsDestination(for suggestedFilename: String) -> URL {
         let fileManager = FileManager.default
         let downloads: URL
         if let dir = try? fileManager.url(for: .downloadsDirectory,
@@ -379,8 +488,6 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
             downloads = fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Downloads")
         }
 
-        // WebKit requires the destination not to already exist; add a numeric suffix
-        // (e.g. "file 1.pdf") to avoid collisions.
         var destination = downloads.appendingPathComponent(suggestedFilename)
         if fileManager.fileExists(atPath: destination.path) {
             let base = (suggestedFilename as NSString).deletingPathExtension
@@ -392,9 +499,7 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
                 counter += 1
             } while fileManager.fileExists(atPath: destination.path)
         }
-
-        downloadDestinations[ObjectIdentifier(download)] = destination
-        completionHandler(destination)
+        return destination
     }
 
     func downloadDidFinish(_ download: WKDownload) {
