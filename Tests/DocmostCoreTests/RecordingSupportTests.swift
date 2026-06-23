@@ -58,4 +58,75 @@ final class RecordingSupportTests: XCTestCase {
         XCTAssertTrue(js.contains("filename"))
         XCTAssertTrue(js.contains("mimeType"))
     }
+
+    // MARK: - Destination picker
+
+    func testRecordingPageTitleHasDeterministicFormat() {
+        let (date, calendar) = fixedDate()
+        XCTAssertEqual(RecordingSupport.recordingPageTitle(for: date, calendar: calendar),
+                       "Recording 2026-06-23 14:25")
+    }
+
+    func testRecordingPageTitlePadsSingleDigitComponents() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        var components = DateComponents()
+        components.year = 2026
+        components.month = 1
+        components.day = 5
+        components.hour = 9
+        components.minute = 3
+        components.second = 7
+        let date = calendar.date(from: components)!
+        XCTAssertEqual(RecordingSupport.recordingPageTitle(for: date, calendar: calendar),
+                       "Recording 2026-01-05 09:03")
+    }
+
+    func testCreatePageBridgeAvailabilityJSProbesTheBridge() {
+        let js = RecordingSupport.createPageBridgeAvailabilityJS
+        XCTAssertTrue(js.contains("window.gitmost?.createPageWithRecording"))
+        XCTAssertTrue(js.contains("typeof"))
+        XCTAssertTrue(js.contains("function"))
+    }
+
+    func testListSpacesJSCallsTheBridge() {
+        let js = RecordingSupport.listSpacesJS
+        XCTAssertTrue(js.contains("window.gitmost.listSpaces"))
+    }
+
+    func testListPagesJSCallsTheBridgeWithNamedArgs() {
+        let js = RecordingSupport.listPagesJS
+        XCTAssertTrue(js.contains("window.gitmost.listPages"))
+        XCTAssertTrue(js.contains("spaceId"))
+        XCTAssertTrue(js.contains("parentPageId"))
+    }
+
+    func testCreatePageWithRecordingJSCallsTheBridgeWithNamedArgs() {
+        let js = RecordingSupport.createPageWithRecordingJS
+        XCTAssertTrue(js.contains("window.gitmost.createPageWithRecording"))
+        XCTAssertTrue(js.contains("spaceId"))
+        XCTAssertTrue(js.contains("parentPageId"))
+        XCTAssertTrue(js.contains("title"))
+        XCTAssertTrue(js.contains("base64"))
+        XCTAssertTrue(js.contains("filename"))
+        XCTAssertTrue(js.contains("mimeType"))
+    }
+
+    func testRecordingSpaceEquatable() {
+        XCTAssertEqual(RecordingSpace(id: "s1", name: "General"),
+                       RecordingSpace(id: "s1", name: "General"))
+        XCTAssertNotEqual(RecordingSpace(id: "s1", name: "General"),
+                          RecordingSpace(id: "s2", name: "General"))
+        XCTAssertNotEqual(RecordingSpace(id: "s1", name: "General"),
+                          RecordingSpace(id: "s1", name: "Other"))
+    }
+
+    func testRecordingPageNodeEquatable() {
+        XCTAssertEqual(RecordingPageNode(id: "p1", title: "Notes", hasChildren: true),
+                       RecordingPageNode(id: "p1", title: "Notes", hasChildren: true))
+        XCTAssertNotEqual(RecordingPageNode(id: "p1", title: "Notes", hasChildren: true),
+                          RecordingPageNode(id: "p1", title: "Notes", hasChildren: false))
+        XCTAssertNotEqual(RecordingPageNode(id: "p1", title: "Notes", hasChildren: true),
+                          RecordingPageNode(id: "p2", title: "Notes", hasChildren: true))
+    }
 }

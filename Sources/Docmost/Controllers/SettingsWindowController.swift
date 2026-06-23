@@ -10,14 +10,38 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private let removeButton = NSButton()
     private let editButton = NSButton()
 
+    // Recording-destination wiring (injected by MainViewController).
+    private let destinationStore: RecordingDestinationStore
+    private let selectedServerId: UUID?
+    private let fetchSpaces: (UUID) async -> [RecordingSpace]
+    private let fetchPages: (UUID, String, String?) async -> [RecordingPageNode]
+    private let bridgeReady: (UUID) async -> Bool
+
+    // Recording-destination UI.
+    private let destinationLabel = NSTextField(labelWithString: "")
+    private let clearDestinationButton = NSButton()
+
+    // Strong reference to the active destination chooser sheet while it is up.
+    private var destinationChooser: RecordingDestinationChooser?
+
     // Private pasteboard type used only for intra-table drag-to-reorder of servers.
     private let serverRowType = NSPasteboard.PasteboardType("com.docmost.settings.server-row")
 
-    init(store: ServerStore) {
+    init(store: ServerStore,
+         destinationStore: RecordingDestinationStore,
+         selectedServerId: UUID?,
+         fetchSpaces: @escaping (UUID) async -> [RecordingSpace],
+         fetchPages: @escaping (UUID, String, String?) async -> [RecordingPageNode],
+         bridgeReady: @escaping (UUID) async -> Bool) {
         self.store = store
+        self.destinationStore = destinationStore
+        self.selectedServerId = selectedServerId
+        self.fetchSpaces = fetchSpaces
+        self.fetchPages = fetchPages
+        self.bridgeReady = bridgeReady
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 360),
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 420),
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
@@ -94,8 +118,12 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         buttonStack.spacing = 8
         buttonStack.translatesAutoresizingMaskIntoConstraints = false
 
+        // Recording-destination section (where every recording becomes a new page).
+        let destinationBox = buildDestinationSection()
+
         contentView.addSubview(scrollView)
         contentView.addSubview(buttonStack)
+        contentView.addSubview(destinationBox)
 
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
@@ -105,10 +133,59 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             buttonStack.topAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: 12),
             buttonStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             buttonStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            buttonStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -16)
+
+            destinationBox.topAnchor.constraint(equalTo: buttonStack.bottomAnchor, constant: 16),
+            destinationBox.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            destinationBox.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            destinationBox.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -16)
         ])
 
         updateButtonState()
+        refreshDestinationLabel()
+    }
+
+    // Builds the "Recording destination" box: a read-only label plus Set… / Clear buttons.
+    private func buildDestinationSection() -> NSView {
+        let box = NSBox()
+        box.translatesAutoresizingMaskIntoConstraints = false
+        box.title = "Recording destination"
+        box.titlePosition = .atTop
+
+        destinationLabel.translatesAutoresizingMaskIntoConstraints = false
+        destinationLabel.lineBreakMode = .byTruncatingTail
+        destinationLabel.textColor = .secondaryLabelColor
+        destinationLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        let setButton = NSButton(title: "Set…", target: self, action: #selector(setDestination))
+        setButton.bezelStyle = .rounded
+
+        clearDestinationButton.title = "Clear"
+        clearDestinationButton.bezelStyle = .rounded
+        clearDestinationButton.target = self
+        clearDestinationButton.action = #selector(clearDestination)
+
+        let row = NSStackView(views: [destinationLabel, setButton, clearDestinationButton])
+        row.orientation = .horizontal
+        row.spacing = 8
+        row.translatesAutoresizingMaskIntoConstraints = false
+
+        box.contentView?.addSubview(row)
+        if let content = box.contentView {
+            NSLayoutConstraint.activate([
+                row.topAnchor.constraint(equalTo: content.topAnchor, constant: 8),
+                row.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 8),
+                row.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -8),
+                row.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -8)
+            ])
+        }
+        return box
+    }
+
+    // Reflects the current destination in the label and toggles the Clear button.
+    private func refreshDestinationLabel() {
+        let current = destinationStore.destination
+        destinationLabel.stringValue = current?.displayLabel ?? "Not set"
+        clearDestinationButton.isEnabled = current != nil
     }
 
     // MARK: - Table data source / delegate
@@ -257,6 +334,99 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             sheetParent.endSheet(window)
         } else {
             window.close()
+        }
+    }
+
+    // MARK: - Recording destination
+
+    // Resolves the target server, verifies its bridge is ready and has spaces, then presents
+    // the destination chooser. All async UI work runs on the main thread.
+    @objc private func setDestination() {
+        // Target: the server selected in the table, else the default server, else the first.
+        let selectedRow = tableView.selectedRow
+        let serverId: UUID?
+        if store.servers.indices.contains(selectedRow) {
+            serverId = store.servers[selectedRow].id
+        } else if let selectedServerId, store.servers.contains(where: { $0.id == selectedServerId }) {
+            serverId = selectedServerId
+        } else {
+            serverId = store.servers.first?.id
+        }
+
+        guard let serverId else {
+            presentInfoAlert(title: "No server", text: "Add and open a server first.")
+            return
+        }
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+
+            guard await self.bridgeReady(serverId) else {
+                self.presentInfoAlert(title: "Server not ready",
+                                      text: "Open this server's tab so spaces can load.")
+                return
+            }
+
+            let spaces = await self.fetchSpaces(serverId)
+            guard !spaces.isEmpty else {
+                self.presentInfoAlert(title: "No spaces", text: "No spaces available.")
+                return
+            }
+
+            let current = self.destinationStore.destination
+            let chooser = RecordingDestinationChooser(
+                spaces: spaces,
+                initialSpaceId: current?.spaceId,
+                initialParentPageId: current?.parentPageId,
+                loadChildren: { [weak self] spaceId, parentPageId in
+                    await self?.fetchPages(serverId, spaceId, parentPageId) ?? []
+                },
+                onConfirm: { [weak self] spaceId, spaceName, parentPageId, parentTitle in
+                    guard let self else { return }
+                    self.destinationStore.save(RecordingDestination(
+                        serverId: serverId,
+                        spaceId: spaceId,
+                        spaceName: spaceName,
+                        parentPageId: parentPageId,
+                        parentTitle: parentTitle))
+                    self.refreshDestinationLabel()
+                },
+                onCancel: {}
+            )
+
+            self.presentDestinationChooser(chooser)
+        }
+    }
+
+    // Presents the chooser as a sheet on the settings window; releases it on dismissal.
+    private func presentDestinationChooser(_ chooser: RecordingDestinationChooser) {
+        destinationChooser = chooser
+        guard let window = window, let sheet = chooser.window else {
+            // No host window to present on: drop the reference rather than leak it.
+            destinationChooser = nil
+            return
+        }
+        window.beginSheet(sheet) { [weak self] _ in
+            self?.destinationChooser = nil
+        }
+    }
+
+    @objc private func clearDestination() {
+        destinationStore.clear()
+        refreshDestinationLabel()
+    }
+
+    // A simple informational alert (sheet on the settings window when available).
+    private func presentInfoAlert(title: String, text: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = text
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+        if let window = window {
+            alert.beginSheetModal(for: window, completionHandler: nil)
+        } else {
+            alert.runModal()
         }
     }
 

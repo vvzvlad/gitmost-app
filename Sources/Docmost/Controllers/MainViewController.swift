@@ -223,7 +223,20 @@ final class MainViewController: NSViewController, NSMenuItemValidation {
             return
         }
 
-        let controller = SettingsWindowController(store: store)
+        let controller = SettingsWindowController(
+            store: store,
+            destinationStore: RecordingDestinationStore(),
+            selectedServerId: selectedID,
+            fetchSpaces: { [weak self] serverId in
+                await self?.recordingFetchSpaces(serverId: serverId) ?? []
+            },
+            fetchPages: { [weak self] serverId, spaceId, parentPageId in
+                await self?.recordingFetchPages(serverId: serverId, spaceId: spaceId, parentPageId: parentPageId) ?? []
+            },
+            bridgeReady: { [weak self] serverId in
+                await self?.recordingBridgeReady(serverId: serverId) ?? false
+            }
+        )
         settingsWindowController = controller
 
         guard let window = view.window, let sheet = controller.window else {
@@ -313,20 +326,84 @@ final class MainViewController: NSViewController, NSMenuItemValidation {
         }
     }
 
-    // Delivers a finished recording into the open page (via the gitmost JS bridge), or —
-    // if the page closed mid-recording — reveals the temp file so it is not lost. Wired
-    // from AppDelegate as RecordingController.shared.deliverFile. `completion` reports whether
-    // the recording was delivered somewhere durable, so the controller can advance its phase
-    // to done/failed; it fires exactly once on the main thread.
+    // Delivers a finished recording to the destination configured in Settings: it always
+    // creates a NEW "Recording <timestamp>" child page under the configured space/parent
+    // (regardless of which page, if any, is open) and inserts the recording there. If no
+    // destination is set, or the destination server's tab/bridge is unavailable, the file
+    // is saved to Downloads instead — the recording is never lost. Wired from AppDelegate as
+    // RecordingController.shared.deliverFile. `completion` reports whether the recording was
+    // delivered somewhere durable; it fires exactly once on the main thread.
     func deliverRecording(_ url: URL, completion: @escaping (Bool) -> Void) {
-        if let tab = activeTab {
-            tab.insertRecording(fileURL: url, completion: completion)
-        } else {
-            // No page open: reveal the temp file so it is not lost. Saved somewhere the user
-            // can find it counts as delivered.
-            NSWorkspace.shared.activateFileViewerSelecting([url])
-            completion(true)
+        let store = RecordingDestinationStore()
+        guard let dest = store.destination else {
+            saveToDownloads(url,
+                            reason: "No recording destination is set. Choose one in Settings.",
+                            completion: completion)
+            return
         }
+        guard let tab = tabs[dest.serverId] else {
+            // Only loaded tabs can serve the page-creation bridge; the destination server
+            // must be open in a tab for the recording to become a page.
+            saveToDownloads(url,
+                            reason: "Open the destination server's tab first, then record.",
+                            completion: completion)
+            return
+        }
+        tab.createRecordingPage(spaceId: dest.spaceId,
+                                parentPageId: dest.parentPageId,
+                                title: RecordingSupport.recordingPageTitle(for: Date()),
+                                fileURL: url,
+                                completion: completion)
+    }
+
+    // Saves a recording to Downloads when no page could be created, explains why in an
+    // alert, and reveals it in Finder. Routes through any loaded tab's recordingFallback
+    // when one exists (so the file lands identically to a normal download); otherwise does
+    // a minimal inline Downloads copy. `completion(true)` on a durable save, `completion(false)`
+    // only when even the Downloads copy fails. Main-thread; fires completion exactly once.
+    private func saveToDownloads(_ url: URL, reason: String, completion: @escaping (Bool) -> Void) {
+        // Prefer any loaded tab's fallback (shared alert + Downloads placement).
+        if let tab = tabs.values.first {
+            tab.recordingFallback(fileURL: url, reason: reason, completion: completion)
+            return
+        }
+
+        // No tab at all: do a minimal inline Downloads copy + reveal.
+        let destination = WebTab.downloadsDestination(for: url.lastPathComponent)
+        do {
+            try FileManager.default.copyItem(at: url, to: destination)
+            NSWorkspace.shared.activateFileViewerSelecting([destination])
+            try? FileManager.default.removeItem(at: url)
+            presentAlert(title: "Recording saved to Downloads",
+                         text: "\(reason)\n\nThe recording was saved to your Downloads folder instead.")
+            completion(true)
+        } catch {
+            presentAlert(title: "Recording could not be saved",
+                         text: "\(reason)\n\nSaving to Downloads also failed: \(error.localizedDescription)")
+            completion(false)
+        }
+    }
+
+    // MARK: - Recording destination data providers (for the Settings chooser)
+
+    // These route to a server's loaded WebTab. Only loaded tabs can serve the bridge, so an
+    // unopened server yields empty lists / not-ready (the chooser shows the appropriate alert).
+
+    // Lists the spaces the user can write to on the given server. Empty on nil/throw.
+    func recordingFetchSpaces(serverId: UUID) async -> [RecordingSpace] {
+        guard let tab = tabs[serverId] else { return [] }
+        return (try? await tab.fetchSpaces()) ?? []
+    }
+
+    // Lists the pages under a space (or under a parent page) on the given server.
+    func recordingFetchPages(serverId: UUID, spaceId: String, parentPageId: String?) async -> [RecordingPageNode] {
+        guard let tab = tabs[serverId] else { return [] }
+        return (try? await tab.fetchPages(spaceId: spaceId, parentPageId: parentPageId)) ?? []
+    }
+
+    // True when the given server's page-creation bridge is ready (its tab is loaded).
+    func recordingBridgeReady(serverId: UUID) async -> Bool {
+        await tabs[serverId]?.bridgeSupportsPageCreation() ?? false
     }
 
     // Generic alert helper, reused by AppDelegate's RecordingController.presentError wiring.

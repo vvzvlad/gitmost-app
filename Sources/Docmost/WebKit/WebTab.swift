@@ -244,17 +244,17 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
 
     // MARK: - Recording delivery
 
-    // Delivers a recorded .m4a into the live page via the gitmost JS bridge
-    // (window.gitmost.insertRecording). Mirrors importMarkdownFiles(_:): the file is
-    // read into base64 and handed to the page's own session via callAsyncJavaScript in
-    // the .page content world. If the bridge is missing or reports a failure, the file
-    // is saved to Downloads and revealed in Finder instead.
+    // Creates a NEW child page titled `title` under the configured destination
+    // (space `spaceId`, optional parent `parentPageId`; nil parent = space root) and
+    // inserts the recording into it. The destination is fixed in Settings; there is no
+    // runtime picker and the recording never goes into the currently-open page.
     //
     // `completion` reports whether the recording was delivered somewhere durable: true when
-    // the page bridge inserted it OR the Downloads fallback saved a copy; false only when
-    // neither worked (read failure AND no save). It fires EXACTLY ONCE on the main thread on
-    // every path, so the controller can advance the recording phase to done/failed.
-    func insertRecording(fileURL: URL, completion: ((Bool) -> Void)? = nil) {
+    // the page was created OR the Downloads fallback saved a copy; false only when neither
+    // worked. It fires EXACTLY ONCE on the main thread on every path, so the controller can
+    // advance the recording phase to done/failed.
+    func createRecordingPage(spaceId: String, parentPageId: String?, title: String,
+                             fileURL: URL, completion: @escaping (Bool) -> Void) {
         // Read + base64-encode off the main thread: recordings can be tens/hundreds of MB
         // and this method is called on the main thread, so doing it inline would freeze the
         // UI. Hop back to the main thread for the WebKit bridge probe / fallback.
@@ -267,7 +267,7 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
                     // If the WebTab was deallocated mid-read (e.g. its server was removed
                     // or its URL changed, dropping the tab), still report completion so the
                     // RecordingController does not hang forever in .saving.
-                    guard let self else { completion?(false); return }
+                    guard let self else { completion(false); return }
                     self.recordingFallback(
                         fileURL: fileURL,
                         reason: "Could not read the recording: \(error.localizedDescription)",
@@ -278,68 +278,144 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
 
             DispatchQueue.main.async {
                 // Same guard as above: a deallocated tab must not swallow the completion.
-                guard let self else { completion?(false); return }
-                self.deliverRecording(fileURL: fileURL, base64: base64, completion: completion)
+                guard let self else { completion(false); return }
+                self.deliverToNewPage(spaceId: spaceId, parentPageId: parentPageId,
+                                      title: title, base64: base64,
+                                      fileURL: fileURL, completion: completion)
             }
         }
     }
 
-    // Runs on the main thread. Probes the in-page bridge and inserts the recording via it,
-    // falling back to Downloads when the bridge is missing or reports a failure. `completion`
-    // (when supplied) is forwarded down every terminal path so it fires exactly once.
+    // Runs on the main thread. Probes the page-creation bridge and creates a new page from
+    // the recording, falling back to Downloads when the bridge is missing or reports a
+    // failure. `completion` is forwarded down every terminal path so it fires exactly once.
     @MainActor
-    private func deliverRecording(fileURL: URL, base64: String, completion: ((Bool) -> Void)? = nil) {
+    private func deliverToNewPage(spaceId: String, parentPageId: String?, title: String,
+                                  base64: String, fileURL: URL,
+                                  completion: @escaping (Bool) -> Void) {
+        Task { @MainActor [weak self] in
+            guard let self else { completion(false); return }
+
+            // 1. Probe the page-creation bridge; if it is missing, save to Downloads.
+            guard await self.bridgeSupportsPageCreation() else {
+                self.recordingFallback(fileURL: fileURL,
+                                       reason: "This server does not support recording pages yet.",
+                                       completion: completion)
+                return
+            }
+
+            // 2. Create the page; .success deletes the temp file, .failure saves to Downloads.
+            let outcome = await self.createPageWithRecording(
+                spaceId: spaceId, parentPageId: parentPageId,
+                title: title, base64: base64, filename: fileURL.lastPathComponent)
+            switch outcome {
+            case .success:
+                // The bytes are now in a new page; drop the temp source file.
+                try? FileManager.default.removeItem(at: fileURL)
+                completion(true)
+            case .failure(let error):
+                self.recordingFallback(fileURL: fileURL,
+                                       reason: error.localizedDescription,
+                                       completion: completion)
+            }
+        }
+    }
+
+    // MARK: - Page-creation bridge
+
+    // Wraps a bridge-side failure so it surfaces with a human-readable message.
+    private struct BridgeError: LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
+    }
+
+    // Probes whether the global page-creation bridge is registered. False on any throw.
+    @MainActor
+    func bridgeSupportsPageCreation() async -> Bool {
+        do {
+            let available = try await webView.callAsyncJavaScript(
+                RecordingSupport.createPageBridgeAvailabilityJS,
+                arguments: [:], in: nil, contentWorld: .page)
+            return (available as? Bool) == true
+        } catch {
+            return false
+        }
+    }
+
+    // Lists the spaces the user can write to. Throws BridgeError on not-ok / malformed.
+    @MainActor
+    func fetchSpaces() async throws -> [RecordingSpace] {
+        let result = try await webView.callAsyncJavaScript(
+            RecordingSupport.listSpacesJS,
+            arguments: [:], in: nil, contentWorld: .page)
+        guard let dict = result as? [String: Any], (dict["ok"] as? Bool) == true else {
+            let message = ((result as? [String: Any])?["error"] as? String) ?? "Could not load spaces."
+            throw BridgeError(message: message)
+        }
+        let raw = (dict["spaces"] as? [[String: Any]]) ?? []
+        return raw.compactMap { entry in
+            guard let id = entry["id"] as? String, let name = entry["name"] as? String else { return nil }
+            return RecordingSpace(id: id, name: name)
+        }
+    }
+
+    // Lists the pages under a space, or under a parent page when `parentPageId` is set.
+    @MainActor
+    func fetchPages(spaceId: String, parentPageId: String?) async throws -> [RecordingPageNode] {
         let arguments: [String: Any] = [
+            "spaceId": spaceId,
+            "parentPageId": parentPageId ?? ""
+        ]
+        let result = try await webView.callAsyncJavaScript(
+            RecordingSupport.listPagesJS,
+            arguments: arguments, in: nil, contentWorld: .page)
+        guard let dict = result as? [String: Any], (dict["ok"] as? Bool) == true else {
+            let message = ((result as? [String: Any])?["error"] as? String) ?? "Could not load pages."
+            throw BridgeError(message: message)
+        }
+        let raw = (dict["pages"] as? [[String: Any]]) ?? []
+        return raw.compactMap { entry in
+            guard let id = entry["id"] as? String, let title = entry["title"] as? String else { return nil }
+            let hasChildren = (entry["hasChildren"] as? Bool) ?? false
+            return RecordingPageNode(id: id, title: title, hasChildren: hasChildren)
+        }
+    }
+
+    // Creates a new page from the recording. Never throws out: returns .failure with a
+    // human-readable message so the caller can fall back to Downloads.
+    @MainActor
+    private func createPageWithRecording(spaceId: String, parentPageId: String?,
+                                         title: String, base64: String,
+                                         filename: String) async -> Result<Void, Error> {
+        let arguments: [String: Any] = [
+            "spaceId": spaceId,
+            "parentPageId": parentPageId ?? "",
+            "title": title,
             "base64": base64,
-            "filename": fileURL.lastPathComponent,
+            "filename": filename,
             "mimeType": RecordingSupport.mimeType
         ]
-
-        Task { @MainActor [weak self] in
-            guard let self else { completion?(false); return }
-            do {
-                // 1. Probe the bridge in the page world.
-                let available = try await self.webView.callAsyncJavaScript(
-                    RecordingSupport.bridgeAvailabilityJS,
-                    arguments: [:], in: nil, contentWorld: .page)
-                guard (available as? Bool) == true else {
-                    // No editable page open: save the recording to Downloads and reveal it.
-                    self.recordingFallback(fileURL: fileURL,
-                                           reason: "The open page does not support in-app recording insertion yet.",
-                                           completion: completion)
-                    return
-                }
-
-                // 2. Invoke the bridge; it resolves with { ok, error?, message? }.
-                let result = try await self.webView.callAsyncJavaScript(
-                    RecordingSupport.insertRecordingJS,
-                    arguments: arguments, in: nil, contentWorld: .page)
-
-                if let dict = result as? [String: Any], (dict["ok"] as? Bool) == true {
-                    // Success: the audio block appears in the page; show no modal.
-                    // The bytes are now safely in the page, so drop the temp source file
-                    // (its base64 was produced before this method ran) to avoid a /tmp leak.
-                    try? FileManager.default.removeItem(at: fileURL)
-                    completion?(true)
-                    return
-                }
-
-                // 3. Bridge returned not-ok: fall back with the server-provided message.
-                let dict = result as? [String: Any]
-                let message = (dict?["message"] as? String)
-                    ?? (dict?["error"] as? String)
-                    ?? "Inserting the recording into the page failed."
-                self.recordingFallback(fileURL: fileURL, reason: message, completion: completion)
-            } catch {
-                self.recordingFallback(fileURL: fileURL, reason: error.localizedDescription, completion: completion)
+        do {
+            let result = try await webView.callAsyncJavaScript(
+                RecordingSupport.createPageWithRecordingJS,
+                arguments: arguments, in: nil, contentWorld: .page)
+            if let dict = result as? [String: Any], (dict["ok"] as? Bool) == true {
+                return .success(())
             }
+            let dict = result as? [String: Any]
+            let message = (dict?["message"] as? String)
+                ?? (dict?["error"] as? String)
+                ?? "Creating the recording page failed."
+            return .failure(BridgeError(message: message))
+        } catch {
+            return .failure(error)
         }
     }
 
-    // Saves the recording to Downloads, reveals it in Finder, and explains why in-page
-    // insertion did not happen. `completion(true)` when the file was saved (delivered durably);
+    // Saves the recording to Downloads, reveals it in Finder, and explains why a page was
+    // not created. `completion(true)` when the file was saved (delivered durably);
     // `completion(false)` when even the Downloads save failed (the recording was lost).
-    private func recordingFallback(fileURL: URL, reason: String, completion: ((Bool) -> Void)? = nil) {
+    func recordingFallback(fileURL: URL, reason: String, completion: ((Bool) -> Void)? = nil) {
         let destination = Self.downloadsDestination(for: fileURL.lastPathComponent)
         do {
             // Copy (not move): the copy must succeed before we touch the temp source.
