@@ -6,6 +6,10 @@ import AppKit
 // (this is what makes copy/paste work inside the gitmost web forms).
 enum MenuBuilder {
 
+    // Weak reference to the View ▸ "Show Recorder Panel" item so AppDelegate can hide it when
+    // the recording feature is off. Weak: the menu owns the item; this is just a back-channel.
+    static weak var showRecorderPanelItem: NSMenuItem?
+
     static func installMainMenu() {
         let mainMenu = NSMenu()
 
@@ -158,6 +162,7 @@ enum MenuBuilder {
                                       keyEquivalent: "o")
         showRecorder.keyEquivalentModifierMask = [.command, .shift]
         showRecorder.target = nil
+        MenuBuilder.showRecorderPanelItem = showRecorder
         menu.addItem(showRecorder)
 
         item.submenu = menu

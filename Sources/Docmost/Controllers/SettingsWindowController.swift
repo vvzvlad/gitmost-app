@@ -17,8 +17,13 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private let fetchPages: (UUID, String, String?) async -> [RecordingPageNode]
     private let bridgeReady: (UUID) async -> Bool
 
+    // Recording-feature gate (default OFF). The whole section below is inert until enabled.
+    private let featureStore = RecordingFeatureStore()
+    private let enableRecordingCheckbox = NSButton()
+
     // Recording-destination UI.
     private let destinationLabel = NSTextField(labelWithString: "")
+    private let setDestinationButton = NSButton()
     private let clearDestinationButton = NSButton()
 
     // Strong reference to the active destination chooser sheet while it is up.
@@ -55,6 +60,10 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         NotificationCenter.default.addObserver(self,
                                                selector: #selector(reloadTable),
                                                name: .serversDidChange,
+                                               object: nil)
+        NotificationCenter.default.addObserver(self,
+                                               selector: #selector(recordingFeatureDidChange),
+                                               name: .recordingFeatureDidChange,
                                                object: nil)
     }
 
@@ -137,55 +146,100 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             destinationBox.topAnchor.constraint(equalTo: buttonStack.bottomAnchor, constant: 16),
             destinationBox.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             destinationBox.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            destinationBox.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -16)
+            // Extra bottom breathing room so the box does not sit flush against the window edge.
+            destinationBox.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -24)
         ])
 
         updateButtonState()
-        refreshDestinationLabel()
+        updateRecordingFeatureUI()
     }
 
-    // Builds the "Recording destination" box: a read-only label plus Set… / Clear buttons.
+    // Builds the "Meeting recording" box: a feature on/off checkbox plus the destination row
+    // (a read-only label and Set… / Clear buttons). The destination controls are gated on the
+    // checkbox so they are inert while the feature is off.
     private func buildDestinationSection() -> NSView {
         let box = NSBox()
         box.translatesAutoresizingMaskIntoConstraints = false
-        box.title = "Recording destination"
+        box.title = "Meeting recording"
         box.titlePosition = .atTop
+
+        // The feature on/off toggle (default OFF). Flipping it adds/removes the app surfaces live.
+        enableRecordingCheckbox.setButtonType(.switch)
+        enableRecordingCheckbox.title = "Enable meeting recording"
+        enableRecordingCheckbox.target = self
+        enableRecordingCheckbox.action = #selector(toggleFeature(_:))
+        enableRecordingCheckbox.translatesAutoresizingMaskIntoConstraints = false
 
         destinationLabel.translatesAutoresizingMaskIntoConstraints = false
         destinationLabel.lineBreakMode = .byTruncatingTail
         destinationLabel.textColor = .secondaryLabelColor
         destinationLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        let setButton = NSButton(title: "Set…", target: self, action: #selector(setDestination))
-        setButton.bezelStyle = .rounded
+        setDestinationButton.title = "Set…"
+        setDestinationButton.bezelStyle = .rounded
+        setDestinationButton.target = self
+        setDestinationButton.action = #selector(setDestination)
 
         clearDestinationButton.title = "Clear"
         clearDestinationButton.bezelStyle = .rounded
         clearDestinationButton.target = self
         clearDestinationButton.action = #selector(clearDestination)
 
-        let row = NSStackView(views: [destinationLabel, setButton, clearDestinationButton])
-        row.orientation = .horizontal
-        row.spacing = 8
-        row.translatesAutoresizingMaskIntoConstraints = false
+        let destinationRow = NSStackView(views: [destinationLabel, setDestinationButton, clearDestinationButton])
+        destinationRow.orientation = .horizontal
+        destinationRow.spacing = 8
+        destinationRow.translatesAutoresizingMaskIntoConstraints = false
 
-        box.contentView?.addSubview(row)
+        // Vertical stack: the toggle above the destination row.
+        let vstack = NSStackView(views: [enableRecordingCheckbox, destinationRow])
+        vstack.orientation = .vertical
+        vstack.alignment = .leading
+        vstack.spacing = 8
+        vstack.translatesAutoresizingMaskIntoConstraints = false
+
+        box.contentView?.addSubview(vstack)
         if let content = box.contentView {
             NSLayoutConstraint.activate([
-                row.topAnchor.constraint(equalTo: content.topAnchor, constant: 8),
-                row.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 8),
-                row.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -8),
-                row.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -8)
+                vstack.topAnchor.constraint(equalTo: content.topAnchor, constant: 8),
+                vstack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 8),
+                vstack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -8),
+                vstack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -8),
+                // Stretch the destination row to the box width so the label can expand.
+                destinationRow.trailingAnchor.constraint(equalTo: vstack.trailingAnchor)
             ])
         }
         return box
     }
 
-    // Reflects the current destination in the label and toggles the Clear button.
+    // Reflects the current destination in the label and toggles the Clear button. Clear requires
+    // BOTH a configured destination AND the feature enabled.
     private func refreshDestinationLabel() {
         let current = destinationStore.destination
         destinationLabel.stringValue = current?.displayLabel ?? "Not set"
-        clearDestinationButton.isEnabled = current != nil
+        clearDestinationButton.isEnabled = (current != nil) && featureStore.isEnabled
+    }
+
+    // Toggles the recording feature on/off (persisted) and broadcasts the change so AppDelegate
+    // adds/removes the panel + menu-bar item live, then refreshes this section's controls.
+    @objc private func toggleFeature(_ sender: NSButton) {
+        featureStore.setEnabled(sender.state == .on)
+        // Broadcast so AppDelegate adds/removes the panel + menu-bar item live.
+        NotificationCenter.default.post(name: .recordingFeatureDidChange, object: nil)
+        updateRecordingFeatureUI()
+    }
+
+    // Reflects the feature flag in the checkbox and enables/disables the destination controls.
+    private func updateRecordingFeatureUI() {
+        // Capture is impossible on macOS < 14.2 and no Start affordance is ever created there,
+        // so disable the checkbox (enabling the feature would do nothing).
+        let supported = RecordingController.shared.isSupported
+        enableRecordingCheckbox.isEnabled = supported
+        enableRecordingCheckbox.toolTip = supported ? nil : "Recording requires macOS 14.2 or later."
+        let enabled = featureStore.isEnabled
+        enableRecordingCheckbox.state = enabled ? .on : .off
+        setDestinationButton.isEnabled = enabled
+        destinationLabel.textColor = enabled ? .secondaryLabelColor : .tertiaryLabelColor
+        refreshDestinationLabel()   // also toggles Clear based on enabled + presence
     }
 
     // MARK: - Table data source / delegate
@@ -276,6 +330,12 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         updateButtonState()
     }
 
+    // Reflects a feature-flag change posted elsewhere (e.g. the menu-bar surface) so the
+    // checkbox never goes stale. Idempotent: updateRecordingFeatureUI() posts nothing.
+    @objc private func recordingFeatureDidChange() {
+        updateRecordingFeatureUI()
+    }
+
     // MARK: - Actions
 
     @objc private func addNew() {
@@ -339,63 +399,37 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
     // MARK: - Recording destination
 
-    // Resolves the target server, verifies its bridge is ready and has spaces, then presents
-    // the destination chooser. All async UI work runs on the main thread.
+    // Presents the unified destination chooser spanning all configured servers. Spaces and
+    // pages are fetched lazily per server from inside the chooser, so no pre-fetch happens
+    // here; "server not ready" / "no spaces" now surface as info rows inside the tree.
     @objc private func setDestination() {
-        // Target: the server selected in the table, else the default server, else the first.
-        let selectedRow = tableView.selectedRow
-        let serverId: UUID?
-        if store.servers.indices.contains(selectedRow) {
-            serverId = store.servers[selectedRow].id
-        } else if let selectedServerId, store.servers.contains(where: { $0.id == selectedServerId }) {
-            serverId = selectedServerId
-        } else {
-            serverId = store.servers.first?.id
-        }
-
-        guard let serverId else {
-            presentInfoAlert(title: "No server", text: "Add and open a server first.")
+        guard !store.servers.isEmpty else {
+            presentInfoAlert(title: "No server", text: "Add a server first.")
             return
         }
-
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-
-            guard await self.bridgeReady(serverId) else {
-                self.presentInfoAlert(title: "Server not ready",
-                                      text: "Open this server's tab so spaces can load.")
-                return
-            }
-
-            let spaces = await self.fetchSpaces(serverId)
-            guard !spaces.isEmpty else {
-                self.presentInfoAlert(title: "No spaces", text: "No spaces available.")
-                return
-            }
-
-            let current = self.destinationStore.destination
-            let chooser = RecordingDestinationChooser(
-                spaces: spaces,
-                initialSpaceId: current?.spaceId,
-                initialParentPageId: current?.parentPageId,
-                loadChildren: { [weak self] spaceId, parentPageId in
-                    await self?.fetchPages(serverId, spaceId, parentPageId) ?? []
-                },
-                onConfirm: { [weak self] spaceId, spaceName, parentPageId, parentTitle in
-                    guard let self else { return }
-                    self.destinationStore.save(RecordingDestination(
-                        serverId: serverId,
-                        spaceId: spaceId,
-                        spaceName: spaceName,
-                        parentPageId: parentPageId,
-                        parentTitle: parentTitle))
-                    self.refreshDestinationLabel()
-                },
-                onCancel: {}
-            )
-
-            self.presentDestinationChooser(chooser)
-        }
+        let current = destinationStore.destination
+        // Preselect the saved destination's server, else the active tab's server.
+        let initialServerId = current?.serverId ?? selectedServerId
+        let chooser = RecordingDestinationChooser(
+            servers: store.servers,
+            initialServerId: initialServerId,
+            initialSpaceId: current?.spaceId,
+            initialParentPageId: current?.parentPageId,
+            bridgeReady: { [weak self] serverId in await self?.bridgeReady(serverId) ?? false },
+            loadSpaces: { [weak self] serverId in await self?.fetchSpaces(serverId) ?? [] },
+            loadPages: { [weak self] serverId, spaceId, parentPageId in
+                await self?.fetchPages(serverId, spaceId, parentPageId) ?? []
+            },
+            onConfirm: { [weak self] serverId, spaceId, spaceName, parentPageId, parentTitle in
+                guard let self else { return }
+                self.destinationStore.save(RecordingDestination(
+                    serverId: serverId, spaceId: spaceId, spaceName: spaceName,
+                    parentPageId: parentPageId, parentTitle: parentTitle))
+                self.refreshDestinationLabel()
+            },
+            onCancel: {}
+        )
+        presentDestinationChooser(chooser)
     }
 
     // Presents the chooser as a sheet on the settings window; releases it on dismissal.

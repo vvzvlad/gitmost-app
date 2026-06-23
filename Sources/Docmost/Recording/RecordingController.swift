@@ -1,4 +1,5 @@
 import Foundation
+import DocmostCore
 
 // Posted on every recording-state transition so any UI surface (the menu via the
 // responder chain, plus Stage B's floating panel and menu-bar item) can refresh.
@@ -49,6 +50,9 @@ final class RecordingController {
     // 14.2, *) and the app targets 14.0; only ever created/cast behind an availability
     // guard. nil whenever state == .idle.
     private var recorder: AnyObject?
+
+    // The recording feature on/off flag (UserDefaults-backed). Read on every canStart/start.
+    private let featureStore = RecordingFeatureStore()
 
     // True from the moment stop() begins until its completion runs, mirroring the
     // re-entrancy discipline that previously lived in MainViewController: it prevents a
@@ -112,7 +116,7 @@ final class RecordingController {
     // control so the user can't start with no open page / on macOS < 14.2.
     var canStart: Bool {
         assertMainThread()
-        return isSupported && (isDeliveryAvailable?() ?? false)
+        return isSupported && featureStore.isEnabled && (isDeliveryAvailable?() ?? false)
     }
 
     // MARK: - Public mutators (main thread only)
@@ -139,6 +143,12 @@ final class RecordingController {
 
         // A new session supersedes any pending auto-dismiss from a previous done/failed phase.
         cancelDismiss()
+
+        guard featureStore.isEnabled else {
+            presentError?("Recording disabled",
+                          "Enable meeting recording in Settings first.")
+            return
+        }
 
         guard isSupported else {
             presentError?("Recording unavailable",

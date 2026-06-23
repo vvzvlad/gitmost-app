@@ -13,6 +13,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var recordingPanel: RecordingPanelController?
     private var recordingStatusItem: RecordingStatusItem?
 
+    // Gates the entire recording feature (default OFF, opt-in). Read live so toggles in
+    // Settings take effect without a rebuild.
+    private let recordingFeatureStore = RecordingFeatureStore()
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Build the main menu first so standard Edit actions (copy/paste) work everywhere.
         MenuBuilder.installMainMenu()
@@ -57,32 +61,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             mainVC.deliverRecording(url, completion: completion)
         }
 
-        // Stage B: create the floating recorder panel. It works on every supported OS
-        // (14.0+) and simply keeps Start disabled (canStart == false) on macOS < 14.2 where
-        // capture is unavailable.
-        let recordingPanel = RecordingPanelController()
-        self.recordingPanel = recordingPanel
-
-        // The menu-bar status item is only useful where recording can actually happen
-        // (macOS 14.2+). On older systems Start is always disabled, so adding the item would
-        // just clutter the menu bar — skip it there.
-        if controller.isSupported {
-            let recordingStatusItem = RecordingStatusItem()
-            // Route the menu-bar "Show Recorder Panel" to the panel without retaining it here.
-            recordingStatusItem.onShowPanel = { [weak recordingPanel] in
-                recordingPanel?.show()
-            }
-            self.recordingStatusItem = recordingStatusItem
-        }
+        // Create or tear down the recording UI surfaces to match the feature flag (default OFF).
+        applyRecordingFeatureState()
 
         // Auto-show the panel whenever a recording becomes active so the controls are
         // visible. Showing on any non-idle state (idempotent if already visible) is enough.
+        // When the feature is off the panel is nil, so this safely no-ops.
         NotificationCenter.default.addObserver(self,
                                                selector: #selector(recordingStateDidChange),
                                                name: .recordingStateDidChange,
                                                object: nil)
 
+        // React live when the user flips the feature toggle in Settings.
+        NotificationCenter.default.addObserver(self,
+                                               selector: #selector(recordingFeatureDidChange),
+                                               name: .recordingFeatureDidChange,
+                                               object: nil)
+
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    // Live reaction to the Settings feature toggle: add or remove the recording surfaces.
+    @objc private func recordingFeatureDidChange() {
+        applyRecordingFeatureState()
+    }
+
+    // Creates or tears down the recording UI surfaces (floating panel + menu-bar item) and the
+    // View ▸ "Show Recorder Panel" menu item to match the feature flag. Idempotent; main thread.
+    private func applyRecordingFeatureState() {
+        let enabled = recordingFeatureStore.isEnabled
+        if enabled {
+            if recordingPanel == nil {
+                recordingPanel = RecordingPanelController()
+            }
+            // The menu-bar item is the only "Start Recording" affordance; only useful where
+            // capture is actually possible (macOS 14.2+).
+            if RecordingController.shared.isSupported, recordingStatusItem == nil {
+                let item = RecordingStatusItem()
+                item.onShowPanel = { [weak self] in self?.recordingPanel?.show() }
+                recordingStatusItem = item
+            }
+        } else {
+            // Finalize any active capture so audio is never lost, then remove the surfaces.
+            if RecordingController.shared.state != .idle {
+                RecordingController.shared.stop()
+            }
+            recordingPanel?.hide()
+            recordingPanel = nil        // ARC release; panel window is not released-when-closed
+            recordingStatusItem = nil   // its deinit removes the status-bar item
+        }
+        // Hide the View menu item when the feature is off.
+        MenuBuilder.showRecorderPanelItem?.isHidden = !enabled
     }
 
     // Show the floating recorder panel once a session becomes active (any non-idle phase).
