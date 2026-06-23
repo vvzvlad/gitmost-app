@@ -412,26 +412,39 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
         }
     }
 
+    // Copies the recording into Downloads, reveals it in Finder, and removes the temp
+    // original on success. Returns the saved URL, or nil if the copy failed (temp kept).
+    // Shared by `recordingFallback` and MainViewController's zero-tabs save path so both
+    // place the file identically.
+    static func copyRecordingToDownloads(_ fileURL: URL) -> URL? {
+        let destination = downloadsDestination(for: fileURL.lastPathComponent)
+        do {
+            // Copy (not move): the copy must succeed before we touch the temp source.
+            try FileManager.default.copyItem(at: fileURL, to: destination)
+            // The bytes are safely in Downloads (the user's kept copy), so remove the
+            // temp original to avoid a /tmp leak.
+            try? FileManager.default.removeItem(at: fileURL)
+            NSWorkspace.shared.activateFileViewerSelecting([destination])
+            return destination
+        } catch {
+            // Copy failed: keep the temp original so the recording is not lost.
+            return nil
+        }
+    }
+
     // Saves the recording to Downloads, reveals it in Finder, and explains why a page was
     // not created. `completion(true)` when the file was saved (delivered durably);
     // `completion(false)` when even the Downloads save failed (the recording was lost).
     func recordingFallback(fileURL: URL, reason: String, completion: ((Bool) -> Void)? = nil) {
-        let destination = Self.downloadsDestination(for: fileURL.lastPathComponent)
-        do {
-            // Copy (not move): the copy must succeed before we touch the temp source.
-            try FileManager.default.copyItem(at: fileURL, to: destination)
-            NSWorkspace.shared.activateFileViewerSelecting([destination])
-            // The bytes are safely in Downloads (the user's kept copy), so remove the
-            // temp original to avoid a /tmp leak.
-            try? FileManager.default.removeItem(at: fileURL)
+        if Self.copyRecordingToDownloads(fileURL) != nil {
             presentImportAlert(
                 title: "Recording saved to Downloads",
                 text: "\(reason)\n\nThe recording was saved to your Downloads folder instead.")
             completion?(true)
-        } catch {
+        } else {
             presentImportAlert(
                 title: "Recording could not be saved",
-                text: "\(reason)\n\nSaving to Downloads also failed: \(error.localizedDescription)")
+                text: "\(reason)\n\nSaving to Downloads also failed.")
             completion?(false)
         }
     }

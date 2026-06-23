@@ -32,24 +32,6 @@ public enum RecordingSupport {
         return "Recording \(formatter.string(from: date))"
     }
 
-    /// JS expression (for `callAsyncJavaScript`) that resolves `true` when the in-page
-    /// bridge is available. Evaluated in the page content world.
-    public static let bridgeAvailabilityJS: String =
-        "return typeof window.gitmost?.insertRecording === 'function';"
-
-    /// JS body (for `callAsyncJavaScript`) that invokes the in-page bridge with the
-    /// named arguments `base64`, `filename`, `mimeType`. The bridge never throws; it
-    /// resolves with `{ ok, attachmentId?, error?, message? }`. We forward that object
-    /// straight back to Swift so the caller can decide success vs. fallback.
-    public static let insertRecordingJS: String = """
-    const result = await window.gitmost.insertRecording({
-        base64: base64,
-        filename: filename,
-        mimeType: mimeType
-    });
-    return result;
-    """
-
     // MARK: - Destination picker bridge (create a new page from a recording)
 
     /// JS expression (for `callAsyncJavaScript`) that resolves `true` when the page

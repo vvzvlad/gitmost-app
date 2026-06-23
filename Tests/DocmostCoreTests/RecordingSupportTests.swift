@@ -44,21 +44,6 @@ final class RecordingSupportTests: XCTestCase {
         XCTAssertEqual(RecordingSupport.mimeType, "audio/mp4")
     }
 
-    func testBridgeAvailabilityJSProbesTheBridge() {
-        let js = RecordingSupport.bridgeAvailabilityJS
-        XCTAssertTrue(js.contains("window.gitmost?.insertRecording"))
-        XCTAssertTrue(js.contains("typeof"))
-        XCTAssertTrue(js.contains("function"))
-    }
-
-    func testInsertRecordingJSCallsTheBridgeWithNamedArgs() {
-        let js = RecordingSupport.insertRecordingJS
-        XCTAssertTrue(js.contains("window.gitmost.insertRecording"))
-        XCTAssertTrue(js.contains("base64"))
-        XCTAssertTrue(js.contains("filename"))
-        XCTAssertTrue(js.contains("mimeType"))
-    }
-
     // MARK: - Destination picker
 
     func testRecordingPageTitleHasDeterministicFormat() {

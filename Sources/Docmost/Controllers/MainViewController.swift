@@ -368,18 +368,14 @@ final class MainViewController: NSViewController, NSMenuItemValidation {
             return
         }
 
-        // No tab at all: do a minimal inline Downloads copy + reveal.
-        let destination = WebTab.downloadsDestination(for: url.lastPathComponent)
-        do {
-            try FileManager.default.copyItem(at: url, to: destination)
-            NSWorkspace.shared.activateFileViewerSelecting([destination])
-            try? FileManager.default.removeItem(at: url)
+        // No tab at all: do a minimal inline Downloads copy + reveal via the shared helper.
+        if WebTab.copyRecordingToDownloads(url) != nil {
             presentAlert(title: "Recording saved to Downloads",
                          text: "\(reason)\n\nThe recording was saved to your Downloads folder instead.")
             completion(true)
-        } catch {
+        } else {
             presentAlert(title: "Recording could not be saved",
-                         text: "\(reason)\n\nSaving to Downloads also failed: \(error.localizedDescription)")
+                         text: "\(reason)\n\nSaving to Downloads also failed.")
             completion(false)
         }
     }

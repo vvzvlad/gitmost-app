@@ -62,7 +62,7 @@ final class RecordingDestinationChooser: NSWindowController {
         self.onCancel = onCancel
 
         // Fixed-size, non-closable window: there is no untracked close path, so the only
-        // ways out are the Cancel/Save buttons or the host's beginSheet completion.
+        // ways out are the Cancel/Save buttons (both routed through `finish()`).
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 460, height: 360),
             styleMask: [.titled],
@@ -261,14 +261,9 @@ final class RecordingDestinationChooser: NSWindowController {
         finish()
     }
 
-    // Routes any externally-triggered dismissal (beginSheet completion, host teardown)
-    // through cancel(); the `didFinish` guard makes it a no-op after confirm/cancel.
-    func dismissAsCancel() {
-        cancel()
-    }
-
-    // Ends the sheet exactly once. Sets `didFinish` BEFORE endSheet so the beginSheet
-    // completion (which also calls dismissAsCancel) cannot re-enter.
+    // Ends the sheet exactly once. The window is `.titled` without `.closable`, so the
+    // only ways out are the Cancel/Save buttons, both of which route through here; the
+    // `didFinish` guard makes a second call a no-op.
     private func finish() {
         didFinish = true
         if let window = window, let sheetParent = window.sheetParent {
