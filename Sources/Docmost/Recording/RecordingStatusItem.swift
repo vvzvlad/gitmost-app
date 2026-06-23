@@ -1,9 +1,10 @@
 import AppKit
 
 // A menu-bar (status bar) item driving RecordingController.shared. One of the three UI
-// surfaces over the shared controller, it only reflects state and forwards taps. The icon,
-// tint and (while active) the mm:ss title track the controller live; its menu is rebuilt on
-// demand via NSMenuDelegate so titles/enabled are always current. Main thread only.
+// surfaces over the shared controller, it only reflects state and forwards taps. The icon and
+// tint track the controller live; the elapsed time lives in the button's tooltip (kept tidy —
+// no cramped inline text in the menu bar). Its menu is rebuilt on demand via NSMenuDelegate so
+// titles/enabled are always current. Main thread only.
 final class RecordingStatusItem: NSObject, NSMenuDelegate {
 
     private let statusItem: NSStatusItem
@@ -13,7 +14,8 @@ final class RecordingStatusItem: NSObject, NSMenuDelegate {
     private let pauseResumeItem = NSMenuItem()
     private let showPanelItem = NSMenuItem()
 
-    // mm:ss ticker; runs ONLY while recording/paused and is invalidated when idle.
+    // Tooltip ticker; runs ONLY while recording/paused and is invalidated when idle. It only
+    // refreshes the tooltip (the visible button is icon-only), so it never causes layout churn.
     private var updateTimer: Timer?
 
     // Wired by AppDelegate to show the floating recorder panel.
@@ -25,6 +27,12 @@ final class RecordingStatusItem: NSObject, NSMenuDelegate {
 
         buildMenu()
         statusItem.menu = menu
+
+        // Icon-only button; the elapsed time goes into the tooltip, never the title.
+        if let button = statusItem.button {
+            button.imagePosition = .imageOnly
+            button.title = ""
+        }
 
         NotificationCenter.default.addObserver(self,
                                                selector: #selector(recordingStateDidChange),
@@ -120,55 +128,56 @@ final class RecordingStatusItem: NSObject, NSMenuDelegate {
         refreshButton()
     }
 
-    // Update the button icon/tint/title and (re)arm the mm:ss ticker for the current state.
+    // Update the button icon/tint and tooltip and (re)arm the tooltip ticker for the current
+    // state. The visible button stays icon-only; the time lives in the tooltip.
     private func refreshButton() {
         guard let button = statusItem.button else { return }
         let controller = RecordingController.shared
 
         let symbolName: String
-        let tooltip: String
         switch controller.state {
         case .idle:
-            symbolName = "record.circle"
+            symbolName = "waveform"
             button.contentTintColor = nil
-            tooltip = "Recorder — idle"
         case .recording:
             symbolName = "record.circle.fill"
             button.contentTintColor = .systemRed
-            tooltip = "Recording"
         case .paused:
             symbolName = "pause.circle.fill"
-            button.contentTintColor = nil
-            tooltip = "Recording paused"
+            button.contentTintColor = .systemOrange
         }
-        button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: tooltip)
-        button.toolTip = tooltip
+        // Keep the button strictly icon-only — no cramped inline mm:ss text.
+        button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Recorder")
+        button.imagePosition = .imageOnly
+        button.title = ""
 
-        updateTitle()
+        updateTooltip()
         updateTimerLifecycle()
     }
 
-    // Show mm:ss next to the icon while active; clear it when idle.
-    private func updateTitle() {
+    // Put the state and elapsed time into the tooltip (e.g. "Recording — 1:23"); idle shows a
+    // plain label. Refreshed on the existing 1s ticker while active.
+    private func updateTooltip() {
         guard let button = statusItem.button else { return }
         let controller = RecordingController.shared
-        if controller.state == .idle {
-            button.title = ""
-            button.imagePosition = .imageOnly
-        } else {
-            button.title = " " + Self.format(controller.elapsedTime)
-            button.imagePosition = .imageLeading
+        switch controller.state {
+        case .idle:
+            button.toolTip = "Recorder — idle"
+        case .recording:
+            button.toolTip = "Recording — " + Self.format(controller.elapsedTime)
+        case .paused:
+            button.toolTip = "Paused — " + Self.format(controller.elapsedTime)
         }
     }
 
-    // Run the mm:ss ticker ONLY while recording/paused; invalidate it when idle so the
+    // Run the tooltip ticker ONLY while recording/paused; invalidate it when idle so the
     // status item costs nothing in the background.
     private func updateTimerLifecycle() {
         let isActive = RecordingController.shared.state != .idle
         if isActive {
             guard updateTimer == nil else { return }
             let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
-                self?.updateTitle()
+                self?.updateTooltip()
             }
             RunLoop.main.add(timer, forMode: .common)
             updateTimer = timer
@@ -178,7 +187,7 @@ final class RecordingStatusItem: NSObject, NSMenuDelegate {
         }
     }
 
-    // mm:ss, or h:mm:ss once past an hour.
+    // m:ss, or h:mm:ss once past an hour.
     private static func format(_ interval: TimeInterval) -> String {
         let total = Int(interval)
         let hours = total / 3600
@@ -187,6 +196,6 @@ final class RecordingStatusItem: NSObject, NSMenuDelegate {
         if hours > 0 {
             return String(format: "%d:%02d:%02d", hours, minutes, seconds)
         }
-        return String(format: "%02d:%02d", minutes, seconds)
+        return String(format: "%d:%02d", minutes, seconds)
     }
 }
