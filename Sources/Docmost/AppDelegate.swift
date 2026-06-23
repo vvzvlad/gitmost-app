@@ -47,8 +47,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             (windowController?.window?.contentViewController as? MainViewController)?.activeTab != nil
         }
 
-        controller.deliverFile = { [weak windowController] url in
-            (windowController?.window?.contentViewController as? MainViewController)?.deliverRecording(url)
+        controller.deliverFile = { [weak windowController] url, completion in
+            guard let mainVC = windowController?.window?.contentViewController as? MainViewController else {
+                // No window/VC to deliver into: the file was never inserted or saved, so report
+                // failure so the controller advances to .failed rather than hanging in .saving.
+                completion(false)
+                return
+            }
+            mainVC.deliverRecording(url, completion: completion)
         }
 
         // Stage B: create the floating recorder panel. It works on every supported OS
@@ -79,10 +85,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    // Show the floating recorder panel once a recording becomes active. Posted on the main
-    // thread by RecordingController.
+    // Show the floating recorder panel once a session becomes active (any non-idle phase).
+    // The panel hides itself when the phase returns to idle (see RecordingPanelController).
+    // Posted on the main thread by RecordingController.
     @objc private func recordingStateDidChange() {
-        if RecordingController.shared.state != .idle {
+        if RecordingController.shared.phase != .idle {
             recordingPanel?.show()
         }
     }

@@ -249,7 +249,12 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
     // read into base64 and handed to the page's own session via callAsyncJavaScript in
     // the .page content world. If the bridge is missing or reports a failure, the file
     // is saved to Downloads and revealed in Finder instead.
-    func insertRecording(fileURL: URL) {
+    //
+    // `completion` reports whether the recording was delivered somewhere durable: true when
+    // the page bridge inserted it OR the Downloads fallback saved a copy; false only when
+    // neither worked (read failure AND no save). It fires EXACTLY ONCE on the main thread on
+    // every path, so the controller can advance the recording phase to done/failed.
+    func insertRecording(fileURL: URL, completion: ((Bool) -> Void)? = nil) {
         // Read + base64-encode off the main thread: recordings can be tens/hundreds of MB
         // and this method is called on the main thread, so doing it inline would freeze the
         // UI. Hop back to the main thread for the WebKit bridge probe / fallback.
@@ -259,23 +264,31 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
                 base64 = try Data(contentsOf: fileURL).base64EncodedString()
             } catch {
                 DispatchQueue.main.async {
-                    self?.recordingFallback(
+                    // If the WebTab was deallocated mid-read (e.g. its server was removed
+                    // or its URL changed, dropping the tab), still report completion so the
+                    // RecordingController does not hang forever in .saving.
+                    guard let self else { completion?(false); return }
+                    self.recordingFallback(
                         fileURL: fileURL,
-                        reason: "Could not read the recording: \(error.localizedDescription)")
+                        reason: "Could not read the recording: \(error.localizedDescription)",
+                        completion: completion)
                 }
                 return
             }
 
             DispatchQueue.main.async {
-                self?.deliverRecording(fileURL: fileURL, base64: base64)
+                // Same guard as above: a deallocated tab must not swallow the completion.
+                guard let self else { completion?(false); return }
+                self.deliverRecording(fileURL: fileURL, base64: base64, completion: completion)
             }
         }
     }
 
     // Runs on the main thread. Probes the in-page bridge and inserts the recording via it,
-    // falling back to Downloads when the bridge is missing or reports a failure.
+    // falling back to Downloads when the bridge is missing or reports a failure. `completion`
+    // (when supplied) is forwarded down every terminal path so it fires exactly once.
     @MainActor
-    private func deliverRecording(fileURL: URL, base64: String) {
+    private func deliverRecording(fileURL: URL, base64: String, completion: ((Bool) -> Void)? = nil) {
         let arguments: [String: Any] = [
             "base64": base64,
             "filename": fileURL.lastPathComponent,
@@ -283,15 +296,17 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
         ]
 
         Task { @MainActor [weak self] in
-            guard let self else { return }
+            guard let self else { completion?(false); return }
             do {
                 // 1. Probe the bridge in the page world.
                 let available = try await self.webView.callAsyncJavaScript(
                     RecordingSupport.bridgeAvailabilityJS,
                     arguments: [:], in: nil, contentWorld: .page)
                 guard (available as? Bool) == true else {
+                    // No editable page open: save the recording to Downloads and reveal it.
                     self.recordingFallback(fileURL: fileURL,
-                                           reason: "The open page does not support in-app recording insertion yet.")
+                                           reason: "The open page does not support in-app recording insertion yet.",
+                                           completion: completion)
                     return
                 }
 
@@ -305,6 +320,7 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
                     // The bytes are now safely in the page, so drop the temp source file
                     // (its base64 was produced before this method ran) to avoid a /tmp leak.
                     try? FileManager.default.removeItem(at: fileURL)
+                    completion?(true)
                     return
                 }
 
@@ -313,16 +329,17 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
                 let message = (dict?["message"] as? String)
                     ?? (dict?["error"] as? String)
                     ?? "Inserting the recording into the page failed."
-                self.recordingFallback(fileURL: fileURL, reason: message)
+                self.recordingFallback(fileURL: fileURL, reason: message, completion: completion)
             } catch {
-                self.recordingFallback(fileURL: fileURL, reason: error.localizedDescription)
+                self.recordingFallback(fileURL: fileURL, reason: error.localizedDescription, completion: completion)
             }
         }
     }
 
     // Saves the recording to Downloads, reveals it in Finder, and explains why in-page
-    // insertion did not happen.
-    private func recordingFallback(fileURL: URL, reason: String) {
+    // insertion did not happen. `completion(true)` when the file was saved (delivered durably);
+    // `completion(false)` when even the Downloads save failed (the recording was lost).
+    private func recordingFallback(fileURL: URL, reason: String, completion: ((Bool) -> Void)? = nil) {
         let destination = Self.downloadsDestination(for: fileURL.lastPathComponent)
         do {
             // Copy (not move): the copy must succeed before we touch the temp source.
@@ -334,10 +351,12 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
             presentImportAlert(
                 title: "Recording saved to Downloads",
                 text: "\(reason)\n\nThe recording was saved to your Downloads folder instead.")
+            completion?(true)
         } catch {
             presentImportAlert(
                 title: "Recording could not be saved",
                 text: "\(reason)\n\nSaving to Downloads also failed: \(error.localizedDescription)")
+            completion?(false)
         }
     }
 

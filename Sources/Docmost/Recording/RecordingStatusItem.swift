@@ -76,11 +76,14 @@ final class RecordingStatusItem: NSObject, NSMenuDelegate {
     }
 
     // Refresh menu titles/enabled right before the menu opens so they are always current.
+    // Reads `phase` (not `state`) so the delivery phases (saving/done/failed) are handled:
+    // during them `state` is already .idle but the session isn't over, so "Start Recording"
+    // must stay disabled rather than silently no-op via toggle().
     func menuNeedsUpdate(_ menu: NSMenu) {
         let controller = RecordingController.shared
         // "Show Recorder Panel" is always available (auto-enable is off, so set it explicitly).
         showPanelItem.isEnabled = true
-        switch controller.state {
+        switch controller.phase {
         case .idle:
             startStopItem.title = "Start Recording"
             startStopItem.isEnabled = controller.canStart
@@ -96,6 +99,13 @@ final class RecordingStatusItem: NSObject, NSMenuDelegate {
             startStopItem.isEnabled = true
             pauseResumeItem.title = "Resume"
             pauseResumeItem.isEnabled = true
+        case .saving, .done, .failed:
+            // A session is finalizing or auto-dismissing: there is nothing to start or stop,
+            // and pause/resume does not apply. Keep both controls disabled so neither no-ops.
+            startStopItem.title = "Start Recording"
+            startStopItem.isEnabled = false
+            pauseResumeItem.title = "Pause"
+            pauseResumeItem.isEnabled = false
         }
     }
 
@@ -134,12 +144,15 @@ final class RecordingStatusItem: NSObject, NSMenuDelegate {
         guard let button = statusItem.button else { return }
         let controller = RecordingController.shared
 
+        // Drive the icon from `phase` so the active delivery phases (saving/done/failed) read
+        // as an in-progress session rather than idle. Saving/done/failed map to the recording
+        // icon to keep it simple: any non-idle phase shows an active recorder.
         let symbolName: String
-        switch controller.state {
+        switch controller.phase {
         case .idle:
             symbolName = "waveform"
             button.contentTintColor = nil
-        case .recording:
+        case .recording, .saving, .done, .failed:
             symbolName = "record.circle.fill"
             button.contentTintColor = .systemRed
         case .paused:
@@ -160,13 +173,19 @@ final class RecordingStatusItem: NSObject, NSMenuDelegate {
     private func updateTooltip() {
         guard let button = statusItem.button else { return }
         let controller = RecordingController.shared
-        switch controller.state {
+        switch controller.phase {
         case .idle:
             button.toolTip = "Recorder — idle"
         case .recording:
             button.toolTip = "Recording — " + Self.format(controller.elapsedTime)
         case .paused:
             button.toolTip = "Paused — " + Self.format(controller.elapsedTime)
+        case .saving:
+            button.toolTip = "Saving…"
+        case .done:
+            button.toolTip = "Recording saved"
+        case .failed:
+            button.toolTip = "Recording failed"
         }
     }
 

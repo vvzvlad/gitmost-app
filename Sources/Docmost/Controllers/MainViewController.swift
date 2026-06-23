@@ -315,12 +315,17 @@ final class MainViewController: NSViewController, NSMenuItemValidation {
 
     // Delivers a finished recording into the open page (via the gitmost JS bridge), or —
     // if the page closed mid-recording — reveals the temp file so it is not lost. Wired
-    // from AppDelegate as RecordingController.shared.deliverFile.
-    func deliverRecording(_ url: URL) {
+    // from AppDelegate as RecordingController.shared.deliverFile. `completion` reports whether
+    // the recording was delivered somewhere durable, so the controller can advance its phase
+    // to done/failed; it fires exactly once on the main thread.
+    func deliverRecording(_ url: URL, completion: @escaping (Bool) -> Void) {
         if let tab = activeTab {
-            tab.insertRecording(fileURL: url)
+            tab.insertRecording(fileURL: url, completion: completion)
         } else {
+            // No page open: reveal the temp file so it is not lost. Saved somewhere the user
+            // can find it counts as delivered.
             NSWorkspace.shared.activateFileViewerSelecting([url])
+            completion(true)
         }
     }
 
@@ -345,17 +350,21 @@ final class MainViewController: NSViewController, NSMenuItemValidation {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         let controller = RecordingController.shared
         if menuItem.action == #selector(toggleRecording(_:)) {
-            // "Stop Recording" while recording or paused, else "Start Recording".
-            menuItem.title = controller.state == .idle ? "Start Recording" : "Stop Recording"
-            // Stopping must always be possible; only starting needs an open page.
+            // Treat ANY non-idle phase (recording/paused/saving/done/failed) as "active":
+            // "Stop Recording" then, else "Start Recording".
+            menuItem.title = controller.phase == .idle ? "Start Recording" : "Stop Recording"
+            // Stopping must always be possible; only starting needs an open page. (While
+            // saving/done/failed, toggle() is a no-op, but the title stays "Stop Recording".)
             return controller.isSupported
-                && (controller.state != .idle || activeTab != nil)
+                && (controller.phase != .idle || activeTab != nil)
         }
         if menuItem.action == #selector(togglePauseRecording(_:)) {
             // "Resume Recording" while paused, else "Pause Recording".
-            menuItem.title = controller.state == .paused ? "Resume Recording" : "Pause Recording"
-            // Only meaningful while a recording is active (recording or paused).
-            return controller.isSupported && controller.state != .idle
+            menuItem.title = controller.phase == .paused ? "Resume Recording" : "Pause Recording"
+            // Pause/resume is only meaningful while actively recording or paused (not while
+            // saving/done/failed, where there is no live capture to pause).
+            return controller.isSupported
+                && (controller.phase == .recording || controller.phase == .paused)
         }
         // Leave every other menu item enabled (default responder-chain behavior).
         return true
