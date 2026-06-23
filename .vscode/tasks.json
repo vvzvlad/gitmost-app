@@ -16,7 +16,7 @@
         "isDefault": true
       },
       "presentation": {
-        "reveal": "always",
+        "reveal": "never",
         "panel": "shared",
         "clear": true,
         "focus": false

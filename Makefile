@@ -84,8 +84,11 @@ build: ## Build a release gitmost.app bundle (compile + assemble + ad-hoc sign)
 	@echo "==> Done. Created $(APP) (run: open $(APP))"
 
 .PHONY: run
-run: build ## Build and launch gitmost.app
-	open "$(APP)"
+run: ## Quit any running instance, build, then launch gitmost.app
+	@osascript -e 'quit app "$(APP_NAME)"' >/dev/null 2>&1 || true
+	@pkill -x "$(APP_NAME)" >/dev/null 2>&1 || true
+	@$(MAKE) --no-print-directory build
+	@open "$(APP)"
 
 .PHONY: clean
 clean: ## Remove build artifacts
