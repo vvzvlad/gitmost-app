@@ -2,6 +2,7 @@ import Foundation
 import CoreAudio
 import AudioToolbox
 import AVFoundation
+import os
 import DocmostCore
 
 // Captures system audio output + the default microphone into a single AAC .m4a file
@@ -80,8 +81,37 @@ final class AudioRecorder {
     // Serial queue for the IO proc callbacks.
     private let ioQueue = DispatchQueue(label: "xyz.vvzvlad.gitmost.audio-io")
 
+    // Serializes ALL Core Audio graph mutations (initial build, device-switch rebuild,
+    // teardown) so a rebuild triggered by a default-device change can never interleave
+    // with stop() or another rebuild. The device-change listener block dispatches here.
+    private let controlQueue = DispatchQueue(label: "xyz.vvzvlad.gitmost.audio-control")
+
     // Set inside the IO proc when an AVAudioFile write throws; surfaced on stop().
     private var writeFailed = false
+
+    // Paused flag. IO-proc-shared state: read in handleInput on `ioQueue`, written via
+    // ioQueue.sync from pause()/resume(). When true the IO proc keeps the tap/aggregate
+    // running but skips appending to the file.
+    private var isPaused = false
+
+    // Most-recent mixed-buffer peak in 0...1, written by the IO proc and read from the
+    // main thread. Guarded by `levelLock` (os_unfair_lock) so the read is data-race free.
+    private var level: Float = 0
+    private var levelLock = os_unfair_lock_s()
+
+    // Device-change support. We keep the original tap stream format so a rebuild against a
+    // new default device can detect a sample-rate mismatch (which would corrupt the file).
+    // The two listener blocks are retained so we can remove them on teardown.
+    private var originalTapSampleRate: Double = 0
+    private var inputListenerBlock: AudioObjectPropertyListenerBlock?
+    private var outputListenerBlock: AudioObjectPropertyListenerBlock?
+    // True once stop()/teardown has begun, so a device-change listener that fires during or
+    // after teardown becomes a no-op instead of rebuilding a torn-down graph. Touched only
+    // on `controlQueue`.
+    private var isTearingDown = false
+    // Set inside a rebuild when the new device's format is incompatible with the open file;
+    // surfaced on stop() like writeFailed. Touched on `controlQueue` / under ioQueue.sync.
+    private var rebuildFailed = false
 
     // MARK: - Public API
 
@@ -93,11 +123,18 @@ final class AudioRecorder {
         // Reset state invariants up front, while no IO proc is running (single-threaded
         // here): a previous recording or a failed start() may have left these set.
         writeFailed = false
+        rebuildFailed = false
+        isPaused = false
+        isTearingDown = false
         outputURL = nil
+        setLevel(0)
 
         do {
             try createTap()
             let format = try readTapFormat()
+            // Remember the tap's sample rate; a device-switch rebuild that yields a
+            // different rate would not match the open file and must be rejected.
+            originalTapSampleRate = format.mSampleRate
             let micUID = try defaultInputDeviceUID()
             try createAggregateDevice(tapUID: try tapUID(), micUID: micUID)
             try openOutputFile(sampleRate: format.mSampleRate)
@@ -114,6 +151,10 @@ final class AudioRecorder {
         }
 
         state = .recording
+
+        // Begin observing default-device changes only after the graph is up and the file
+        // is open, so a listener firing mid-build can never race the initial setup.
+        installDeviceChangeListeners()
     }
 
     // Stops capture, finalizes the file and returns its URL (or an error).
@@ -124,30 +165,46 @@ final class AudioRecorder {
         }
         state = .idle
 
-        // Teardown order is load-bearing for thread safety (the IO proc runs on `ioQueue`):
-        //   1. Stop the device so no new IO callback is scheduled.
-        //   2. Destroy the IO proc ID. AudioDeviceDestroyIOProcID synchronously guarantees
-        //      the block will not run again — do this BEFORE touching IO-proc-shared state
-        //      (`writeFailed`, `outputFile`). Clear the stored ID so teardownCoreAudio()
-        //      does not destroy it a second time.
-        //   3. Read `writeFailed` and close the file INSIDE ioQueue.sync so this thread
-        //      observes (happens-before) every write the IO proc made on that same queue.
-        //   4. Destroy the aggregate device and the tap (the rest of teardownCoreAudio()).
-        if let procID = ioProcID {
-            AudioDeviceStop(aggregateID, procID)
-            AudioDeviceDestroyIOProcID(aggregateID, procID)
-            ioProcID = nil
-        }
+        // Remove the default-device listeners first so no new rebuild can be scheduled
+        // onto controlQueue from here on. (Already-queued rebuilds are fenced by the
+        // controlQueue.sync teardown below plus the isTearingDown guard inside rebuild.)
+        removeDeviceChangeListeners()
 
         var didWriteFail = false
-        ioQueue.sync {
-            didWriteFail = writeFailed
-            closeOutputFile()
+        var didRebuildFail = false
+
+        // Run the whole teardown on controlQueue so it is serialized against any in-flight
+        // device-switch rebuild: a rebuild either fully completes before this block or is
+        // turned into a no-op by `isTearingDown` once this block sets it.
+        controlQueue.sync {
+            isTearingDown = true
+
+            // Teardown order is load-bearing for thread safety (the IO proc runs on `ioQueue`):
+            //   1. Stop the device so no new IO callback is scheduled.
+            //   2. Destroy the IO proc ID. AudioDeviceDestroyIOProcID synchronously guarantees
+            //      the block will not run again — do this BEFORE touching IO-proc-shared state
+            //      (`writeFailed`, `outputFile`). Clear the stored ID so teardownCoreAudio()
+            //      does not destroy it a second time.
+            //   3. Read `writeFailed`/`rebuildFailed` and close the file INSIDE ioQueue.sync
+            //      so this thread observes (happens-before) every write the IO proc made on
+            //      that same queue.
+            //   4. Destroy the aggregate device and the tap (the rest of teardownCoreAudio()).
+            if let procID = ioProcID {
+                AudioDeviceStop(aggregateID, procID)
+                AudioDeviceDestroyIOProcID(aggregateID, procID)
+                ioProcID = nil
+            }
+
+            ioQueue.sync {
+                didWriteFail = writeFailed
+                didRebuildFail = rebuildFailed
+                closeOutputFile()
+            }
+
+            teardownCoreAudio()
         }
 
-        teardownCoreAudio()
-
-        if didWriteFail {
+        if didWriteFail || didRebuildFail {
             completion(.failure(RecordingError.fileWriteFailed))
             return
         }
@@ -156,6 +213,190 @@ final class AudioRecorder {
             return
         }
         completion(.success(url))
+    }
+
+    // Pauses writing without tearing down Core Audio. The tap/aggregate keep running; the
+    // IO proc simply stops appending while paused. Safe to call when already paused or
+    // not recording (no-op at the file level).
+    func pause() {
+        // Write isPaused under ioQueue.sync so handleInput observes it on its own queue.
+        ioQueue.sync { isPaused = true }
+    }
+
+    // Resumes appending after a pause.
+    func resume() {
+        ioQueue.sync { isPaused = false }
+    }
+
+    // Thread-safe snapshot of the most-recent mixed-buffer peak (0...1). Readable from the
+    // main thread. Returns the lock-protected level snapshot without touching `ioQueue`, so
+    // the UI level meter never blocks the main thread on the realtime audio IO queue. The
+    // "0 while paused" behavior is provided elsewhere: RecordingController.audioLevel returns
+    // 0 when not recording, and handleInput already calls setLevel(0) while paused.
+    var currentLevel: Float {
+        return readLevel()
+    }
+
+    // MARK: - Audio level metering
+
+    // Reads the current level under the lock.
+    private func readLevel() -> Float {
+        os_unfair_lock_lock(&levelLock)
+        let value = level
+        os_unfair_lock_unlock(&levelLock)
+        return value
+    }
+
+    // Stores a level value under the lock.
+    private func setLevel(_ value: Float) {
+        os_unfair_lock_lock(&levelLock)
+        level = value
+        os_unfair_lock_unlock(&levelLock)
+    }
+
+    // Computes the peak absolute sample of the mixed stereo buffer and stores it with a
+    // light decay so the meter falls smoothly instead of snapping to 0 between blocks.
+    private func updateLevel(from pcm: AVAudioPCMBuffer) {
+        guard let channelData = pcm.floatChannelData else { return }
+        let frames = Int(pcm.frameLength)
+        let channels = Int(pcm.format.channelCount)
+        var peak: Float = 0
+        for ch in 0..<channels {
+            let samples = channelData[ch]
+            for frame in 0..<frames {
+                let magnitude = abs(samples[frame])
+                if magnitude > peak { peak = magnitude }
+            }
+        }
+        peak = min(1, peak)
+
+        // Smooth: rise instantly to a new peak, decay gently otherwise.
+        let previous = readLevel()
+        let smoothed = peak >= previous ? peak : previous * 0.85 + peak * 0.15
+        setLevel(smoothed)
+    }
+
+    // MARK: - Default-device change handling (RUNTIME VALIDATION REQUIRED)
+
+    // Registers property listeners on the system object for default-input and
+    // default-output device changes. When the user switches their mic or speakers while
+    // recording, we rebuild the Core Audio graph against the new device(s) while KEEPING
+    // the same open AVAudioFile so the recording continues into one file.
+    //
+    // The listener blocks dispatch onto `controlQueue`, the single serialization point for
+    // all graph mutations, so a rebuild can never interleave with stop() or another
+    // rebuild.
+    private func installDeviceChangeListeners() {
+        let systemObject = AudioObjectID(kAudioObjectSystemObject)
+
+        var inputAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var outputAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+
+        // Capture self weakly: the recorder may be deallocated while a listener is queued.
+        let inputBlock: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            self?.controlQueue.async { self?.rebuildGraphForDeviceChange() }
+        }
+        let outputBlock: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            self?.controlQueue.async { self?.rebuildGraphForDeviceChange() }
+        }
+        self.inputListenerBlock = inputBlock
+        self.outputListenerBlock = outputBlock
+
+        // Deliver listener callbacks on controlQueue too; we still hop via async inside the
+        // block to keep the public dispatch path uniform with stop()'s serialization.
+        AudioObjectAddPropertyListenerBlock(systemObject, &inputAddress, controlQueue, inputBlock)
+        AudioObjectAddPropertyListenerBlock(systemObject, &outputAddress, controlQueue, outputBlock)
+    }
+
+    // Removes the default-device listeners. Called from stop()/teardown so no rebuild is
+    // scheduled after teardown begins.
+    private func removeDeviceChangeListeners() {
+        let systemObject = AudioObjectID(kAudioObjectSystemObject)
+
+        var inputAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var outputAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+
+        if let inputBlock = inputListenerBlock {
+            AudioObjectRemovePropertyListenerBlock(systemObject, &inputAddress, controlQueue, inputBlock)
+            inputListenerBlock = nil
+        }
+        if let outputBlock = outputListenerBlock {
+            AudioObjectRemovePropertyListenerBlock(systemObject, &outputAddress, controlQueue, outputBlock)
+            outputListenerBlock = nil
+        }
+    }
+
+    // Rebuilds the tap + aggregate + IO proc against the now-current default devices while
+    // keeping the SAME open output file so the recording continues uninterrupted. Runs on
+    // controlQueue (the listener dispatched here), so it is serialized against stop() and
+    // any other rebuild.
+    //
+    // RUNTIME VALIDATION REQUIRED: device hot-swap is the highest-risk path. The exact
+    // failure modes (e.g. brief callback gaps during the swap, whether the new tap reports
+    // the same sample rate) need observation on real 14.2+ hardware.
+    private func rebuildGraphForDeviceChange() {
+        // A listener may fire during/after teardown; this guard makes that a no-op so we
+        // never rebuild a graph that stop() is dismantling.
+        guard !isTearingDown else { return }
+        // Nothing to rebuild if a previous rebuild already failed the recording.
+        guard !rebuildFailed else { return }
+
+        // 1. Stop + destroy the current IO proc. AudioDeviceDestroyIOProcID synchronously
+        //    fences any in-flight callback, so after this no handleInput runs.
+        if let procID = ioProcID {
+            AudioDeviceStop(aggregateID, procID)
+            AudioDeviceDestroyIOProcID(aggregateID, procID)
+            ioProcID = nil
+        }
+        // 2. Destroy the aggregate device and the tap (but NOT the output file).
+        if aggregateID != AudioObjectID(kAudioObjectUnknown) {
+            AudioHardwareDestroyAggregateDevice(aggregateID)
+            aggregateID = AudioObjectID(kAudioObjectUnknown)
+        }
+        if tapID != AUAudioObjectID(kAudioObjectUnknown) {
+            AudioHardwareDestroyProcessTap(tapID)
+            tapID = AUAudioObjectID(kAudioObjectUnknown)
+        }
+
+        // 3. Recreate tap/aggregate/ioproc/startDevice via the EXISTING helpers against the
+        //    now-current default devices. On any failure, fail the recording cleanly:
+        //    set rebuildFailed (handleInput will stop writing; stop() surfaces the error
+        //    via its completion path) rather than silently producing a corrupt file.
+        do {
+            try createTap()
+            let format = try readTapFormat()
+            // The open AVAudioFile was created at originalTapSampleRate. If the new device's
+            // tap reports a different rate, writing its buffers into the existing file would
+            // corrupt it. We cannot resample inside the IO proc cheaply for v1, so reject
+            // the rebuild and surface an error instead of writing mismatched audio.
+            //
+            // LIMITATION (v1): switching to a device whose system tap runs at a different
+            // sample rate stops the recording. A best-effort resample is left for a later
+            // iteration. This is intentionally fail-closed: no corrupt file is produced.
+            if abs(format.mSampleRate - originalTapSampleRate) > 0.5 {
+                rebuildFailed = true
+                return
+            }
+            let micUID = try defaultInputDeviceUID()
+            try createAggregateDevice(tapUID: try tapUID(), micUID: micUID)
+            try installIOProc()
+            try startDevice()
+        } catch {
+            // Could not rebuild against the new device: fail the recording cleanly.
+            rebuildFailed = true
+        }
     }
 
     // MARK: - Tap
@@ -333,7 +574,7 @@ final class AudioRecorder {
     // Called on `ioQueue` (a Core Audio dispatch thread) for every input block. Mixes
     // the incoming buffers down to stereo and appends to the output file.
     private func handleInput(_ inInputData: UnsafePointer<AudioBufferList>) {
-        guard !writeFailed,
+        guard !writeFailed, !rebuildFailed,
               let outputFile = outputFile,
               let outputFormat = outputFormat else { return }
 
@@ -341,6 +582,18 @@ final class AudioRecorder {
             UnsafeMutablePointer(mutating: inInputData))
 
         guard let pcmBuffer = mixToStereo(bufferList, format: outputFormat) else { return }
+
+        // Update the metering snapshot from every block (even while paused we report 0 via
+        // the explicit reset below) so the UI level meter tracks live input.
+        updateLevel(from: pcmBuffer)
+
+        // When paused, keep the tap/aggregate running but skip appending to the file; this
+        // (read on ioQueue / written under ioQueue.sync) keeps a clean, gap-free file that
+        // simply omits the paused span.
+        if isPaused {
+            setLevel(0)
+            return
+        }
 
         do {
             // Writing from the IO callback is acceptable for v1 (single producer; the

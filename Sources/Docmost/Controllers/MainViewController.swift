@@ -31,17 +31,9 @@ final class MainViewController: NSViewController, NSMenuItemValidation {
     // Settings window controller is held strongly while presented.
     private var settingsWindowController: SettingsWindowController?
 
-    // Meeting recorder. Stored as AnyObject because AudioRecorder is @available(macOS
-    // 14.2, *) and this class targets macOS 14.0; created on demand inside an
-    // availability guard. `isRecording` is the re-entrancy guard / menu-title source.
-    private var audioRecorder: AnyObject?
-    private var isRecording = false
-    // True from the moment a stop is initiated until its completion runs, so a second
-    // ⌘⇧R while a recording is being finalized is ignored (no bogus "Recording failed").
-    private var isStopping = false
-
-    // The currently visible web tab, if any.
-    private var activeTab: WebTab? { selectedID.flatMap { tabs[$0] } }
+    // The currently visible web tab, if any. Internal so the app wiring (AppDelegate's
+    // RecordingController closures) can query whether a page is available / deliver into it.
+    var activeTab: WebTab? { selectedID.flatMap { tabs[$0] } }
 
     init(store: ServerStore) {
         self.store = store
@@ -300,90 +292,40 @@ final class MainViewController: NSViewController, NSMenuItemValidation {
 
     // MARK: - Recording
 
-    // Starts or stops a meeting recording (system audio + microphone). Gated to macOS
-    // 14.2+ (Core Audio process-tap API). The finished file is delivered into the open
-    // page via the gitmost JS bridge, falling back to Downloads when unavailable.
+    // The recording state machine now lives in RecordingController.shared (a single,
+    // app-level source of truth shared by the menu, and — in Stage B — the floating panel
+    // and menu-bar item). These responder-chain actions just drive that controller.
+
+    // Starts or stops a meeting recording (system audio + microphone).
     @objc func toggleRecording(_ sender: Any?) {
-        guard #available(macOS 14.2, *) else {
-            presentRecordingAlert(title: "Recording unavailable",
-                                  text: "Recording requires macOS 14.2 or later.")
-            return
+        RecordingController.shared.toggle()
+    }
+
+    // Pauses an active recording, or resumes a paused one.
+    @objc func togglePauseRecording(_ sender: Any?) {
+        switch RecordingController.shared.state {
+        case .recording:
+            RecordingController.shared.pause()
+        case .paused:
+            RecordingController.shared.resume()
+        case .idle:
+            break
         }
+    }
 
-        // Ignore input while a stop is finalizing: this prevents a second ⌘⇧R from
-        // re-entering stopRecording() (bogus failure) or starting a new recording before
-        // the previous one has finished tearing down.
-        if isStopping { return }
-
-        if isRecording {
-            stopRecording()
+    // Delivers a finished recording into the open page (via the gitmost JS bridge), or —
+    // if the page closed mid-recording — reveals the temp file so it is not lost. Wired
+    // from AppDelegate as RecordingController.shared.deliverFile.
+    func deliverRecording(_ url: URL) {
+        if let tab = activeTab {
+            tab.insertRecording(fileURL: url)
         } else {
-            startRecording()
+            NSWorkspace.shared.activateFileViewerSelecting([url])
         }
     }
 
-    @available(macOS 14.2, *)
-    private func startRecording() {
-        // Need an open page so we have somewhere to deliver the result; the WebTab
-        // handles bridge-absence, but with no tab at all there is no destination.
-        guard activeTab != nil else {
-            presentRecordingAlert(title: "No page open",
-                                  text: "Open a gitmost page first, then start recording.")
-            return
-        }
-
-        let recorder = AudioRecorder()
-        do {
-            try recorder.start()
-            audioRecorder = recorder
-            isRecording = true
-        } catch {
-            audioRecorder = nil
-            presentRecordingAlert(title: "Could not start recording",
-                                  text: error.localizedDescription)
-        }
-    }
-
-    @available(macOS 14.2, *)
-    private func stopRecording() {
-        guard let recorder = audioRecorder as? AudioRecorder else {
-            isRecording = false
-            return
-        }
-        // Flip all state SYNCHRONOUSLY before calling stop(), so a second ⌘⇧R that arrives
-        // before the completion runs can neither re-enter stopRecording() (the recorder is
-        // already cleared) nor start a fresh recording (isStopping/isRecording block it).
-        //
-        // INVARIANT: AudioRecorder.stop's completion MUST be invoked exactly once (on every
-        // path), or isStopping would stay true and permanently disable the recording command.
-        isStopping = true
-        isRecording = false
-        audioRecorder = nil
-
-        recorder.stop { [weak self] result in
-            // AudioRecorder calls completion synchronously on the calling thread; hop to
-            // the main actor to touch UI / the active tab safely.
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.isStopping = false
-                switch result {
-                case .success(let url):
-                    if let tab = self.activeTab {
-                        tab.insertRecording(fileURL: url)
-                    } else {
-                        // The page closed mid-recording: nothing to insert into. Surface
-                        // the temp location so the file is not lost.
-                        NSWorkspace.shared.activateFileViewerSelecting([url])
-                    }
-                case .failure(let error):
-                    self.presentRecordingAlert(title: "Recording failed",
-                                               text: error.localizedDescription)
-                }
-            }
-        }
-    }
-
-    private func presentRecordingAlert(title: String, text: String) {
+    // Generic alert helper, reused by AppDelegate's RecordingController.presentError wiring.
+    func presentAlert(title: String, text: String) {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = text
@@ -397,17 +339,23 @@ final class MainViewController: NSViewController, NSMenuItemValidation {
 
     // MARK: - Menu validation
 
-    // Keeps the recording menu item's title in sync with state; leaves all other items
-    // enabled (this class otherwise relies on the default responder-chain validation).
+    // Keeps the recording menu items' titles in sync with RecordingController state; leaves
+    // all other items enabled (this class otherwise relies on default responder-chain
+    // validation).
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        let controller = RecordingController.shared
         if menuItem.action == #selector(toggleRecording(_:)) {
-            menuItem.title = isRecording ? "Stop Recording" : "Start Recording"
-            // Enabled only when recording is actually possible: macOS 14.2+ (process-tap
-            // API) AND an open page to deliver the result into. Greyed out otherwise.
-            if #available(macOS 14.2, *) {
-                return activeTab != nil
-            }
-            return false
+            // "Stop Recording" while recording or paused, else "Start Recording".
+            menuItem.title = controller.state == .idle ? "Start Recording" : "Stop Recording"
+            // Stopping must always be possible; only starting needs an open page.
+            return controller.isSupported
+                && (controller.state != .idle || activeTab != nil)
+        }
+        if menuItem.action == #selector(togglePauseRecording(_:)) {
+            // "Resume Recording" while paused, else "Pause Recording".
+            menuItem.title = controller.state == .paused ? "Resume Recording" : "Pause Recording"
+            // Only meaningful while a recording is active (recording or paused).
+            return controller.isSupported && controller.state != .idle
         }
         // Leave every other menu item enabled (default responder-chain behavior).
         return true

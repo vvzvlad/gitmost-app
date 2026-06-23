@@ -83,6 +83,16 @@ enum MenuBuilder {
         record.target = nil
         menu.addItem(record)
 
+        // Pause/Resume the active recording. The dynamic title is set by
+        // MainViewController.validateMenuItem; disabled while idle. ⌘⇧P, nil target ->
+        // responder chain.
+        let pauseRecord = NSMenuItem(title: "Pause Recording",
+                                     action: #selector(MainViewController.togglePauseRecording(_:)),
+                                     keyEquivalent: "p")
+        pauseRecord.keyEquivalentModifierMask = [.command, .shift]
+        pauseRecord.target = nil
+        menu.addItem(pauseRecord)
+
         menu.addItem(.separator())
 
         menu.addItem(withTitle: "Close Window",
@@ -160,6 +170,17 @@ enum MenuBuilder {
                                     keyEquivalent: "0")
         actualSize.target = nil
         menu.addItem(actualSize)
+
+        menu.addItem(.separator())
+
+        // Shows the floating recorder panel. nil target -> routed through the responder
+        // chain to AppDelegate.showRecorderPanel(_:). ⌘⇧O is free (no other item uses it).
+        let showRecorder = NSMenuItem(title: "Show Recorder Panel",
+                                      action: #selector(AppDelegate.showRecorderPanel(_:)),
+                                      keyEquivalent: "o")
+        showRecorder.keyEquivalentModifierMask = [.command, .shift]
+        showRecorder.target = nil
+        menu.addItem(showRecorder)
 
         item.submenu = menu
         return item
