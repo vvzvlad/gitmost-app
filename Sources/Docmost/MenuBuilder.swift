@@ -102,6 +102,16 @@ enum MenuBuilder {
         menu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
         menu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         menu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+
+        // "Paste and Match Style" (⌥⇧⌘V). nil target -> routed through the responder chain;
+        // WKWebView answers pasteAsPlainText: (like paste:), stripping formatting and
+        // delivering only text/plain to the web editor — matching browser behavior.
+        let pasteAndMatchStyle = NSMenuItem(title: "Paste and Match Style",
+                                            action: #selector(NSTextView.pasteAsPlainText(_:)),
+                                            keyEquivalent: "v")
+        pasteAndMatchStyle.keyEquivalentModifierMask = [.command, .option, .shift]
+        menu.addItem(pasteAndMatchStyle)
+
         menu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
 
         item.submenu = menu
