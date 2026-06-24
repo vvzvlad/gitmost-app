@@ -98,7 +98,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // capture is actually possible (macOS 14.2+).
             if RecordingController.shared.isSupported, recordingStatusItem == nil {
                 let item = RecordingStatusItem()
-                item.onShowPanel = { [weak self] in self?.recordingPanel?.show() }
                 recordingStatusItem = item
             }
         } else {

@@ -11,15 +11,10 @@ final class RecordingStatusItem: NSObject, NSMenuDelegate {
     private let menu = NSMenu()
 
     private let startStopItem = NSMenuItem()
-    private let pauseResumeItem = NSMenuItem()
-    private let showPanelItem = NSMenuItem()
 
     // Tooltip ticker; runs ONLY while recording/paused and is invalidated when idle. It only
     // refreshes the tooltip (the visible button is icon-only), so it never causes layout churn.
     private var updateTimer: Timer?
-
-    // Wired by AppDelegate to show the floating recorder panel.
-    var onShowPanel: (() -> Void)?
 
     override init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -61,51 +56,29 @@ final class RecordingStatusItem: NSObject, NSMenuDelegate {
         startStopItem.action = #selector(startStopClicked)
         startStopItem.target = self
         menu.addItem(startStopItem)
-
-        pauseResumeItem.title = "Pause"
-        pauseResumeItem.action = #selector(pauseResumeClicked)
-        pauseResumeItem.target = self
-        menu.addItem(pauseResumeItem)
-
-        menu.addItem(.separator())
-
-        showPanelItem.title = "Show Recorder Panel"
-        showPanelItem.action = #selector(showPanelClicked)
-        showPanelItem.target = self
-        menu.addItem(showPanelItem)
     }
 
-    // Refresh menu titles/enabled right before the menu opens so they are always current.
-    // Reads `phase` (not `state`) so the delivery phases (saving/done/failed) are handled:
-    // during them `state` is already .idle but the session isn't over, so "Start Recording"
-    // must stay disabled rather than silently no-op via toggle().
+    // Refresh the start/stop item title/enabled right before the menu opens so it is always
+    // current. Reads `phase` (not `state`) so the delivery phases (saving/done/failed) are
+    // handled: during them `state` is already .idle but the session isn't over, so "Start
+    // Recording" must stay disabled rather than silently no-op via toggle().
     func menuNeedsUpdate(_ menu: NSMenu) {
         let controller = RecordingController.shared
-        // "Show Recorder Panel" is always available (auto-enable is off, so set it explicitly).
-        showPanelItem.isEnabled = true
         switch controller.phase {
         case .idle:
             startStopItem.title = "Start Recording"
             startStopItem.isEnabled = controller.canStart
-            pauseResumeItem.title = "Pause"
-            pauseResumeItem.isEnabled = false
         case .recording:
             startStopItem.title = "Stop Recording"
             startStopItem.isEnabled = true
-            pauseResumeItem.title = "Pause"
-            pauseResumeItem.isEnabled = true
         case .paused:
             startStopItem.title = "Stop Recording"
             startStopItem.isEnabled = true
-            pauseResumeItem.title = "Resume"
-            pauseResumeItem.isEnabled = true
         case .saving, .done, .failed:
-            // A session is finalizing or auto-dismissing: there is nothing to start or stop,
-            // and pause/resume does not apply. Keep both controls disabled so neither no-ops.
+            // A session is finalizing or auto-dismissing: there is nothing to start or stop.
+            // Keep the control disabled so it never no-ops.
             startStopItem.title = "Start Recording"
             startStopItem.isEnabled = false
-            pauseResumeItem.title = "Pause"
-            pauseResumeItem.isEnabled = false
         }
     }
 
@@ -113,22 +86,6 @@ final class RecordingStatusItem: NSObject, NSMenuDelegate {
 
     @objc private func startStopClicked() {
         RecordingController.shared.toggle()
-    }
-
-    @objc private func pauseResumeClicked() {
-        let controller = RecordingController.shared
-        switch controller.state {
-        case .recording:
-            controller.pause()
-        case .paused:
-            controller.resume()
-        case .idle:
-            break
-        }
-    }
-
-    @objc private func showPanelClicked() {
-        onShowPanel?()
     }
 
     // MARK: - State updates
