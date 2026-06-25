@@ -3,14 +3,12 @@ import AppKit
 // A menu-bar (status bar) item driving RecordingController.shared. One of the three UI
 // surfaces over the shared controller, it only reflects state and forwards taps. The icon and
 // tint track the controller live; the elapsed time lives in the button's tooltip (kept tidy —
-// no cramped inline text in the menu bar). Its menu is rebuilt on demand via NSMenuDelegate so
-// titles/enabled are always current. Main thread only.
-final class RecordingStatusItem: NSObject, NSMenuDelegate {
+// no cramped inline text in the menu bar). A left-click toggles recording directly via
+// RecordingController.shared.toggle() (idle -> start, recording/paused -> stop); there is no
+// dropdown menu. Main thread only.
+final class RecordingStatusItem: NSObject {
 
     private let statusItem: NSStatusItem
-    private let menu = NSMenu()
-
-    private let startStopItem = NSMenuItem()
 
     // Tooltip ticker; runs ONLY while recording/paused and is invalidated when idle. It only
     // refreshes the tooltip (the visible button is icon-only), so it never causes layout churn.
@@ -20,13 +18,12 @@ final class RecordingStatusItem: NSObject, NSMenuDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
 
-        buildMenu()
-        statusItem.menu = menu
-
         // Icon-only button; the elapsed time goes into the tooltip, never the title.
         if let button = statusItem.button {
             button.imagePosition = .imageOnly
             button.title = ""
+            button.target = self
+            button.action = #selector(statusItemClicked)
         }
 
         NotificationCenter.default.addObserver(self,
@@ -43,48 +40,11 @@ final class RecordingStatusItem: NSObject, NSMenuDelegate {
         NSStatusBar.system.removeStatusItem(statusItem)
     }
 
-    // MARK: - Menu
+    // MARK: - Click
 
-    private func buildMenu() {
-        menu.delegate = self
-        // Disable AppKit's automatic item enabling: otherwise it re-enables any item whose
-        // target responds to the action selector, overriding the manual isEnabled state set
-        // in menuNeedsUpdate(_:). With this off, that manual state is authoritative.
-        menu.autoenablesItems = false
-
-        startStopItem.title = "Start Recording"
-        startStopItem.action = #selector(startStopClicked)
-        startStopItem.target = self
-        menu.addItem(startStopItem)
-    }
-
-    // Refresh the start/stop item title/enabled right before the menu opens so it is always
-    // current. Reads `phase` (not `state`) so the delivery phases (saving/done/failed) are
-    // handled: during them `state` is already .idle but the session isn't over, so "Start
-    // Recording" must stay disabled rather than silently no-op via toggle().
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        let controller = RecordingController.shared
-        switch controller.phase {
-        case .idle:
-            startStopItem.title = "Start Recording"
-            startStopItem.isEnabled = controller.canStart
-        case .recording:
-            startStopItem.title = "Stop Recording"
-            startStopItem.isEnabled = true
-        case .paused:
-            startStopItem.title = "Stop Recording"
-            startStopItem.isEnabled = true
-        case .saving, .done, .failed:
-            // A session is finalizing or auto-dismissing: there is nothing to start or stop.
-            // Keep the control disabled so it never no-ops.
-            startStopItem.title = "Start Recording"
-            startStopItem.isEnabled = false
-        }
-    }
-
-    // MARK: - Actions
-
-    @objc private func startStopClicked() {
+    // A left-click toggles recording directly (idle -> start, recording/paused -> stop).
+    // toggle() no-ops during the saving/done/failed delivery phases, so no extra guard is needed.
+    @objc private func statusItemClicked() {
         RecordingController.shared.toggle()
     }
 
@@ -111,7 +71,10 @@ final class RecordingStatusItem: NSObject, NSMenuDelegate {
             button.contentTintColor = nil
         case .recording, .saving, .done, .failed:
             symbolName = "record.circle.fill"
-            button.contentTintColor = .systemRed
+            // A nil tint lets the SF Symbol render with the system's adaptive template color,
+            // which appears as a light/gray glyph on the (dark) menu bar instead of a hard-to-see
+            // dark one.
+            button.contentTintColor = nil
         case .paused:
             symbolName = "pause.circle.fill"
             button.contentTintColor = .systemOrange
