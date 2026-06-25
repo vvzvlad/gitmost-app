@@ -75,11 +75,30 @@ enum MenuBuilder {
         addServer.target = nil
         menu.addItem(addServer)
 
+        // Opens a new page tab of the currently selected server (⌘T). Routed through the
+        // responder chain to MainViewController.newTab(_:).
+        let newTab = NSMenuItem(title: "New Tab",
+                                action: #selector(MainViewController.newTab(_:)),
+                                keyEquivalent: "t")
+        newTab.target = nil
+        menu.addItem(newTab)
+
         menu.addItem(.separator())
 
-        menu.addItem(withTitle: "Close Window",
-                     action: #selector(NSWindow.performClose(_:)),
-                     keyEquivalent: "w")
+        // Closes the active page tab (⌘W). Routed through the responder chain; when the server
+        // has only one tab, MainViewController.closeTab falls back to closing the window.
+        let closeTab = NSMenuItem(title: "Close Tab",
+                                  action: #selector(MainViewController.closeTab(_:)),
+                                  keyEquivalent: "w")
+        closeTab.target = nil
+        menu.addItem(closeTab)
+
+        // Closes the whole window (⇧⌘W) so it stays reachable when "Close Tab" takes ⌘W.
+        let closeWindow = NSMenuItem(title: "Close Window",
+                                     action: #selector(NSWindow.performClose(_:)),
+                                     keyEquivalent: "w")
+        closeWindow.keyEquivalentModifierMask = [.command, .shift]
+        menu.addItem(closeWindow)
 
         item.submenu = menu
         return item

@@ -23,8 +23,21 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
     // controller can refresh navigation chrome (e.g. the Back button).
     var onNavigationStateChanged: (() -> Void)?
 
+    // Fired (on the main thread) whenever the document title changes, so the host
+    // controller can update this tab's title in the page-tab strip.
+    var onTitleChanged: (() -> Void)?
+
     // KVO token for `webView.url`.
     private var urlObservation: NSKeyValueObservation?
+
+    // KVO token for `webView.title`.
+    private var titleObservation: NSKeyValueObservation?
+
+    // The current document title, or nil when the page has no (non-empty) title.
+    var pageTitle: String? {
+        let t = webView.title
+        return (t?.isEmpty == false) ? t : nil
+    }
 
     // Tracks the chosen destination per download so we can reveal it on completion.
     private var downloadDestinations: [ObjectIdentifier: URL] = [:]
@@ -83,6 +96,12 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
         // changes, all on the main thread.
         urlObservation = webView.observe(\.url, options: [.new]) { [weak self] _, _ in
             self?.onNavigationStateChanged?()
+        }
+
+        // Notify the UI when the document title changes so the page-tab strip can show the
+        // page's title instead of a static server name. KVO on `title` fires on the main thread.
+        titleObservation = webView.observe(\.title, options: [.new]) { [weak self] _, _ in
+            self?.onTitleChanged?()
         }
     }
 
@@ -163,6 +182,9 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
         onNavigationStateChanged = nil
         urlObservation?.invalidate()
         urlObservation = nil
+        onTitleChanged = nil
+        titleObservation?.invalidate()
+        titleObservation = nil
         webView.stopLoading()
         webView.navigationDelegate = nil
         webView.uiDelegate = nil

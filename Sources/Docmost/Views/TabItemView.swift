@@ -6,6 +6,8 @@ import AppKit
 final class TabItemView: NSView {
 
     var onClick: (() -> Void)?
+    // Fired when the trailing close (×) button is clicked (only when shown).
+    var onClose: (() -> Void)?
 
     private let label = NSTextField(labelWithString: "")
     private var isSelectedTab = false
@@ -14,6 +16,22 @@ final class TabItemView: NSView {
 
     private let cornerRadius: CGFloat = 7
     private let horizontalPadding: CGFloat = 14
+    // Width reserved for the close button and the gap before it when it is shown.
+    private let closeButtonWidth: CGFloat = 16
+    private let closeButtonGap: CGFloat = 4
+
+    // The trailing close button, hidden by default (server tabs never show it).
+    private let closeButton = NSButton()
+    // Two mutually-exclusive label-trailing constraints: one to the view edge (no close
+    // button) and one to the close button's leading edge (close button shown).
+    private var labelTrailingToEdge: NSLayoutConstraint!
+    private var labelTrailingToButton: NSLayoutConstraint!
+
+    // When true, a trailing × button is shown and the label leaves room for it. Server tabs
+    // keep the default (false) so they look exactly as before.
+    var showsCloseButton: Bool = false {
+        didSet { applyCloseButtonVisibility() }
+    }
 
     init(title: String) {
         super.init(frame: .zero)
@@ -25,10 +43,31 @@ final class TabItemView: NSView {
         label.translatesAutoresizingMaskIntoConstraints = false
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         addSubview(label)
+
+        // Borderless × button pinned to the trailing edge; hidden unless showsCloseButton.
+        closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close Tab")
+        closeButton.isBordered = false
+        closeButton.bezelStyle = .regularSquare
+        closeButton.imagePosition = .imageOnly
+        closeButton.controlSize = .small
+        closeButton.target = self
+        closeButton.action = #selector(closeClicked)
+        closeButton.isHidden = true
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(closeButton)
+
+        labelTrailingToEdge = label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -horizontalPadding)
+        labelTrailingToButton = label.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -closeButtonGap)
+
         NSLayoutConstraint.activate([
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
             label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: horizontalPadding),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -horizontalPadding),
+            labelTrailingToEdge,
+
+            closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            closeButton.widthAnchor.constraint(equalToConstant: closeButtonWidth),
+            closeButton.heightAnchor.constraint(equalToConstant: closeButtonWidth),
         ])
 
         label.stringValue = title
@@ -54,9 +93,31 @@ final class TabItemView: NSView {
     }
 
     // Width fits the label (clamped); height is driven by the bar via a constraint.
+    // When the close button is shown, reserve room for it so the title isn't over-truncated.
     override var intrinsicContentSize: NSSize {
-        let width = label.intrinsicContentSize.width + horizontalPadding * 2
+        var width = label.intrinsicContentSize.width + horizontalPadding * 2
+        if showsCloseButton {
+            width += closeButtonWidth + closeButtonGap
+        }
         return NSSize(width: min(max(width, 80), 220), height: NSView.noIntrinsicMetric)
+    }
+
+    // Toggle the close button's visibility and the label's trailing constraint so the title
+    // truncates before the × when shown, and the view looks identical to before when hidden.
+    private func applyCloseButtonVisibility() {
+        closeButton.isHidden = !showsCloseButton
+        if showsCloseButton {
+            labelTrailingToEdge.isActive = false
+            labelTrailingToButton.isActive = true
+        } else {
+            labelTrailingToButton.isActive = false
+            labelTrailingToEdge.isActive = true
+        }
+        invalidateIntrinsicContentSize()
+    }
+
+    @objc private func closeClicked() {
+        onClose?()
     }
 
     private func updateLabelStyle() {
