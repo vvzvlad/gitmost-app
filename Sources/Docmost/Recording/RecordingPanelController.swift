@@ -9,7 +9,8 @@ import QuartzCore
 // appears only while there is an active session (recording → saving → done/failed) and hides
 // itself the moment the phase returns to .idle. There is NO persistent idle "Start Recording"
 // affordance, NO elapsed timer, NO waveform/level meter, and NO pause button in the popup
-// (pause/resume stay available via the menu-bar menu and the File menu).
+// (pause/resume are not surfaced in any menu — they remain only as programmatic
+// RecordingController operations).
 //
 // Layout is minimal — `[ app icon ] [ status text ] [ trailing control ]` — inside a dark,
 // rounded translucent HUD card pinned to the bottom-right corner of the active screen. The

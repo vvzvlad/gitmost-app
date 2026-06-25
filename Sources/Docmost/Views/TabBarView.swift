@@ -31,9 +31,8 @@ final class TabBarView: NSView {
     }
 
     private func setup() {
-        wantsLayer = true
         // Subtle native bar background.
-        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        TabStrip.applyBackground(to: self)
 
         // Bottom separator first => behind the tabs (the selected tab covers it).
         separator.boxType = .separator
@@ -41,13 +40,7 @@ final class TabBarView: NSView {
         addSubview(separator)
 
         // Full-height row so tabs reach the bottom edge and connect to the content.
-        stackView.orientation = .horizontal
-        stackView.alignment = .centerY
-        stackView.spacing = 2
-        // Hidden arranged subviews are detached from layout, so the hidden back
-        // button leaves no leading gap before the tabs.
-        stackView.detachesHiddenViews = true
-        stackView.translatesAutoresizingMaskIntoConstraints = false
+        TabStrip.configure(stack: stackView)
         addSubview(stackView)
 
         // Back button: first item in the strip, hidden until an external page opens.
@@ -89,20 +82,13 @@ final class TabBarView: NSView {
     // Rebuild the server tabs and highlight the selected one.
     func reload(servers: [Server], selectedID: UUID?) {
         // Remove existing tab views, keeping the persistent back button.
-        for item in tabsByID.values {
-            stackView.removeArrangedSubview(item)
-            item.removeFromSuperview()
-        }
-        tabsByID.removeAll()
+        TabStrip.clearItems(&tabsByID, from: stackView)
 
         for server in servers {
             let id = server.id
-            let item = TabItemView(title: server.name)
+            let item = TabStrip.makeItem(title: server.name, selected: id == selectedID,
+                                         in: stackView, fullHeightOf: self)
             item.onClick = { [weak self] in self?.onSelect?(id) }
-            item.setSelected(id == selectedID)
-            stackView.addArrangedSubview(item)
-            // Tabs span the full bar height so they reach (and cover) the bottom line.
-            item.heightAnchor.constraint(equalTo: heightAnchor).isActive = true
             tabsByID[id] = item
         }
     }
@@ -111,7 +97,7 @@ final class TabBarView: NSView {
     // captured once is not adaptive, so re-resolve it on appearance changes.
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        TabStrip.applyBackground(to: self)
     }
 
     // Show/hide the leading Back button (used when an external page is displayed).

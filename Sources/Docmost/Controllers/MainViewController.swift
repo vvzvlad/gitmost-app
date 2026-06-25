@@ -16,10 +16,9 @@ final class MainViewController: NSViewController, NSMenuItemValidation {
 
     // Two-level tab model. The top strip selects the SERVER; the second strip shows the page
     // ("browser") tabs OF the selected server.
-    // Pure, UI-independent order + active state per server (from DocmostCore).
-    private var tabModel = ServerTabs()
-    // page-tab id -> the kept-alive WebTab backing it.
-    private var webTabs: [UUID: WebTab] = [:]
+    // Owns both the pure per-server tab model and the id->WebTab lifecycle (so they can never
+    // drift), and exposes intent-level operations.
+    private let pageTabs = PageTabController()
     // The currently selected SERVER.
     private var selectedServerID: UUID?
     // The web view currently installed in the content container (so we only swap on change).
@@ -44,8 +43,8 @@ final class MainViewController: NSViewController, NSMenuItemValidation {
     // The currently visible web tab, if any. Internal so the app wiring (AppDelegate's
     // RecordingController closures) can query whether a page is available / deliver into it.
     var activeTab: WebTab? {
-        guard let s = selectedServerID, let t = tabModel.activeTab(for: s) else { return nil }
-        return webTabs[t]
+        guard let s = selectedServerID else { return nil }
+        return pageTabs.activeWebTab(for: s)
     }
 
     init(store: ServerStore) {
@@ -121,6 +120,20 @@ final class MainViewController: NSViewController, NSMenuItemValidation {
         }
         pageTabBar.onNewTab = { [weak self] in self?.newTab(nil) }
 
+        // Forward each tab's navigation/title changes (the controller tags them with serverID+tabID).
+        pageTabs.onNavigationStateChanged = { [weak self] serverID, tabID, webTab in
+            guard let self else { return }
+            self.persistLocation(of: webTab, serverID: serverID, tabID: tabID)
+            // Toggle the Back button only for the visible (selected server + active) tab.
+            if self.selectedServerID == serverID, self.pageTabs.activeTab(for: serverID) == tabID {
+                self.tabBar.setBackButtonVisible(webTab.showsBackButton)
+            }
+        }
+        pageTabs.onTitleChanged = { [weak self] _, tabID, webTab in
+            guard let self else { return }
+            self.pageTabBar.updateTitle(id: tabID, title: self.displayTitle(for: webTab))
+        }
+
         NotificationCenter.default.addObserver(self,
                                                selector: #selector(serversDidChange),
                                                name: .serversDidChange,
@@ -147,84 +160,37 @@ final class MainViewController: NSViewController, NSMenuItemValidation {
     func selectServer(id: UUID) {
         guard let server = store.servers.first(where: { $0.id == id }) else { return }
 
-        // Create the server's first page tab lazily, restoring the last visited page.
-        if !tabModel.hasTabs(for: id) {
-            // Reopen the last visited editable page if we have a valid one; else the root.
-            // Share (read-only) pages are never restored.
-            let startURL = lastLocationStore.load(for: id)
-                .flatMap { server.isInternalPageURL($0) && !server.isSharePageURL($0) ? $0 : nil }
-                ?? server.url
-            let made = makePageTab(server: server, startURL: startURL)
-            tabModel.addTab(made.id, to: id)
-            tabModel.setActiveTab(made.id, for: id)
-        }
+        // Create the server's first page tab lazily, restoring the last visited editable page
+        // (never a share/read-only page); else the server root.
+        guard let tab = pageTabs.openServer(server, startURL:
+                lastLocationStore.load(for: id)
+                    .flatMap { server.isInternalPageURL($0) && !server.isSharePageURL($0) ? $0 : nil }
+                    ?? server.url
+        ) else { return }
 
-        guard let activeID = tabModel.activeTab(for: id), let tab = webTabs[activeID] else { return }
-        tab.loadIfNeeded()
-        // Apply the current zoom so new and existing tabs match the app-wide setting.
-        tab.setPageZoom(currentZoom)
-        setContent(tab)
-
+        showTab(tab)
         selectedServerID = id
         placeholderLabel.isHidden = true
         tabBar.reload(servers: store.servers, selectedID: id)
         reloadPageTabBar()
-        // Reflect the selected tab's current location (each tab has its own URL/history).
-        tabBar.setBackButtonVisible(tab.showsBackButton)
-    }
-
-    // Factors out WebTab creation: builds a kept-alive WebTab for a fresh page-tab id, wires
-    // its navigation/title callbacks, registers it, and returns the new id + tab.
-    private func makePageTab(server: Server, startURL: URL) -> (id: UUID, webTab: WebTab) {
-        let tabID = UUID()
-        let webTab = WebTab(server: server, startURL: startURL,
-                            customJS: UserScripts.js, customCSS: UserScripts.css)
-        webTab.onNavigationStateChanged = { [weak self, weak webTab] in
-            guard let self, let webTab else { return }
-            // Remember the latest internal location for next launch (active tab only).
-            self.persistLocation(of: webTab, serverID: server.id, tabID: tabID)
-            // Toggle the Back button only for the visible (selected server + active) tab.
-            if self.selectedServerID == server.id, self.tabModel.activeTab(for: server.id) == tabID {
-                self.tabBar.setBackButtonVisible(webTab.showsBackButton)
-            }
-        }
-        webTab.onTitleChanged = { [weak self, weak webTab] in
-            guard let self, let webTab else { return }
-            self.pageTabBar.updateTitle(id: tabID, title: self.displayTitle(for: webTab))
-        }
-        webTabs[tabID] = webTab
-        return (tabID, webTab)
     }
 
     // Switch the active page tab WITHIN the selected server.
     private func selectPageTab(serverID: UUID, tabID: UUID) {
         guard selectedServerID == serverID,
-              tabModel.contains(tabID, in: serverID),
-              let tab = webTabs[tabID] else { return }
-        tabModel.setActiveTab(tabID, for: serverID)
-        tab.loadIfNeeded()
-        tab.setPageZoom(currentZoom)
-        setContent(tab)
+              let tab = pageTabs.selectTab(tabID, in: serverID) else { return }
+        showTab(tab)
         reloadPageTabBar()
-        tabBar.setBackButtonVisible(tab.showsBackButton)
     }
 
     // Close a page tab of a server (never the last one). Tears down its web view, updates the
     // model, and — when the closed tab was visible — switches to the new active tab.
     private func closePageTab(serverID: UUID, tabID: UUID) {
-        guard tabModel.count(for: serverID) > 1 else { return }
-
-        let wasVisible = selectedServerID == serverID && tabModel.activeTab(for: serverID) == tabID
-        webTabs[tabID]?.tearDown()
-        webTabs.removeValue(forKey: tabID)
-        let newActive = tabModel.closeTab(tabID, from: serverID)
-
+        let result = pageTabs.closeTab(tabID, in: serverID)
+        guard result.didClose else { return }
         if selectedServerID == serverID {
-            if wasVisible, let newActive, let tab = webTabs[newActive] {
-                tab.loadIfNeeded()
-                tab.setPageZoom(currentZoom)
-                setContent(tab)
-                tabBar.setBackButtonVisible(tab.showsBackButton)
+            if result.closedActiveTab, let newActive = result.newActiveTab {
+                showTab(newActive)
             }
             reloadPageTabBar()
         }
@@ -234,6 +200,16 @@ final class MainViewController: NSViewController, NSMenuItemValidation {
         placeholderLabel.isHidden = !store.servers.isEmpty
         // No servers => no page tabs; collapse the page strip.
         if store.servers.isEmpty { reloadPageTabBar() }
+    }
+
+    // Install a web tab as the visible content and sync the window chrome to it. The single
+    // "make this tab visible" path shared by server selection, page-tab selection, new-tab and
+    // close-fallthrough.
+    private func showTab(_ webTab: WebTab) {
+        webTab.loadIfNeeded()
+        webTab.setPageZoom(currentZoom)
+        setContent(webTab)
+        tabBar.setBackButtonVisible(webTab.showsBackButton)
     }
 
     // Installs `webTab`'s web view into the content container, pinned on all edges. No-op when
@@ -256,19 +232,19 @@ final class MainViewController: NSViewController, NSMenuItemValidation {
 
     // Rebuild the page-tab strip for the selected server (or collapse it when there is none).
     private func reloadPageTabBar() {
-        guard let s = selectedServerID, tabModel.hasTabs(for: s) else {
+        guard let s = selectedServerID, pageTabs.hasTabs(for: s) else {
             pageTabBarHeightConstraint.constant = 0
             pageTabBar.isHidden = true
             return
         }
         pageTabBar.isHidden = false
         pageTabBarHeightConstraint.constant = 30
-        let items: [(id: UUID, title: String)] = tabModel.tabs(for: s).compactMap { id in
-            webTabs[id].map { (id: id, title: displayTitle(for: $0)) }
+        let items: [(id: UUID, title: String)] = pageTabs.tabWebPairs(for: s).map {
+            (id: $0.id, title: displayTitle(for: $0.webTab))
         }
         pageTabBar.reload(tabs: items,
-                          selectedID: tabModel.activeTab(for: s),
-                          showClose: tabModel.count(for: s) > 1)
+                          selectedID: pageTabs.activeTab(for: s),
+                          showClose: pageTabs.count(for: s) > 1)
     }
 
     // Up-to-date display name for a server id (reflects renames), falling back to a snapshot.
@@ -281,13 +257,6 @@ final class MainViewController: NSViewController, NSMenuItemValidation {
         webTab.pageTitle ?? serverName(for: webTab.server.id, fallback: webTab.server.name)
     }
 
-    // A WebTab to represent a server for bridge/recording calls: prefer the active tab, else
-    // the first tab.
-    private func representativeTab(for serverID: UUID) -> WebTab? {
-        if let a = tabModel.activeTab(for: serverID), let t = webTabs[a] { return t }
-        return tabModel.tabs(for: serverID).first.flatMap { webTabs[$0] }
-    }
-
     // MARK: - Server changes
 
     @objc private func serversDidChange() {
@@ -295,11 +264,8 @@ final class MainViewController: NSViewController, NSMenuItemValidation {
         let validIDs = Set(currentServers.map { $0.id })
 
         // Tear down ALL page tabs of servers that were deleted.
-        for serverID in tabModel.serverIDs() where !validIDs.contains(serverID) {
-            for tabID in tabModel.removeServer(serverID) {
-                webTabs[tabID]?.tearDown()
-                webTabs.removeValue(forKey: tabID)
-            }
+        for serverID in pageTabs.serverIDs() where !validIDs.contains(serverID) {
+            pageTabs.removeServer(serverID)
             // Forget its saved location so a recreated server with a new id starts clean.
             lastLocationStore.remove(for: serverID)
         }
@@ -308,11 +274,8 @@ final class MainViewController: NSViewController, NSMenuItemValidation {
         // (lazily recreated on next selection). All tabs of a server share one server.url
         // snapshot, so the representative tab tells us whether the URL changed.
         for server in currentServers {
-            if let tab = representativeTab(for: server.id), tab.server.url != server.url {
-                for tabID in tabModel.removeServer(server.id) {
-                    webTabs[tabID]?.tearDown()
-                    webTabs.removeValue(forKey: tabID)
-                }
+            if let tab = pageTabs.representativeTab(for: server.id), tab.server.url != server.url {
+                pageTabs.removeServer(server.id)
                 // The saved page lived on the old host; drop it so we load the new root.
                 lastLocationStore.remove(for: server.id)
             }
@@ -324,7 +287,7 @@ final class MainViewController: NSViewController, NSMenuItemValidation {
             tabBar.reload(servers: currentServers, selectedID: selected)
             // If the selected server's tabs were torn down (its URL changed), rebuild now so
             // the new address is shown immediately.
-            if !tabModel.hasTabs(for: selected) {
+            if !pageTabs.hasTabs(for: selected) {
                 selectedServerID = nil
                 selectServer(id: selected)
             } else {
@@ -406,7 +369,7 @@ final class MainViewController: NSViewController, NSMenuItemValidation {
     // ACTIVE tab and only for real editable internal pages — never an external/redirect page,
     // never about:blank, and never a read-only public "share" page.
     private func persistLocation(of tab: WebTab, serverID: UUID, tabID: UUID) {
-        guard tabModel.activeTab(for: serverID) == tabID else { return }
+        guard pageTabs.activeTab(for: serverID) == tabID else { return }
         guard let url = tab.webView.url,
               tab.server.isInternalPageURL(url),
               !tab.server.isSharePageURL(url) else { return }
@@ -422,20 +385,16 @@ final class MainViewController: NSViewController, NSMenuItemValidation {
     @objc func newTab(_ sender: Any?) {
         guard let serverID = selectedServerID,
               let server = store.servers.first(where: { $0.id == serverID }) else { return }
-        let made = makePageTab(server: server, startURL: server.url)
-        tabModel.addTab(made.id, to: serverID)
-        made.webTab.loadIfNeeded()
-        made.webTab.setPageZoom(currentZoom)
-        setContent(made.webTab)
+        let tab = pageTabs.newTab(for: server, at: server.url)
+        showTab(tab)
         reloadPageTabBar()
-        tabBar.setBackButtonVisible(made.webTab.showsBackButton)
     }
 
     @objc func closeTab(_ sender: Any?) {
         // Close the active page tab when the server has more than one; otherwise fall back to
         // closing the window, preserving the historical ⌘W = Close Window behavior.
-        if let s = selectedServerID, tabModel.count(for: s) > 1,
-           let active = tabModel.activeTab(for: s) {
+        if let s = selectedServerID, pageTabs.count(for: s) > 1,
+           let active = pageTabs.activeTab(for: s) {
             closePageTab(serverID: s, tabID: active)
         } else {
             view.window?.performClose(sender)
@@ -443,7 +402,7 @@ final class MainViewController: NSViewController, NSMenuItemValidation {
     }
 
     private func applyZoomToAllTabs() {
-        for tab in webTabs.values { tab.setPageZoom(currentZoom) }
+        for tab in pageTabs.allWebTabs { tab.setPageZoom(currentZoom) }
     }
 
     private func setZoom(_ factor: CGFloat) {
@@ -500,7 +459,7 @@ final class MainViewController: NSViewController, NSMenuItemValidation {
                             completion: completion)
             return
         }
-        guard let tab = representativeTab(for: dest.serverId) else {
+        guard let tab = pageTabs.representativeTab(for: dest.serverId) else {
             // Only loaded tabs can serve the page-creation bridge; the destination server
             // must be open in a tab for the recording to become a page.
             saveToDownloads(url,
@@ -522,7 +481,7 @@ final class MainViewController: NSViewController, NSMenuItemValidation {
     // only when even the Downloads copy fails. Main-thread; fires completion exactly once.
     private func saveToDownloads(_ url: URL, reason: String, completion: @escaping (Bool) -> Void) {
         // Prefer any loaded tab's fallback (shared alert + Downloads placement).
-        if let tab = webTabs.values.first {
+        if let tab = pageTabs.allWebTabs.first {
             tab.recordingFallback(fileURL: url, reason: reason, completion: completion)
             return
         }
@@ -546,19 +505,19 @@ final class MainViewController: NSViewController, NSMenuItemValidation {
 
     // Lists the spaces the user can write to on the given server. Empty on nil/throw.
     func recordingFetchSpaces(serverId: UUID) async -> [RecordingSpace] {
-        guard let tab = representativeTab(for: serverId) else { return [] }
+        guard let tab = pageTabs.representativeTab(for: serverId) else { return [] }
         return (try? await tab.fetchSpaces()) ?? []
     }
 
     // Lists the pages under a space (or under a parent page) on the given server.
     func recordingFetchPages(serverId: UUID, spaceId: String, parentPageId: String?) async -> [RecordingPageNode] {
-        guard let tab = representativeTab(for: serverId) else { return [] }
+        guard let tab = pageTabs.representativeTab(for: serverId) else { return [] }
         return (try? await tab.fetchPages(spaceId: spaceId, parentPageId: parentPageId)) ?? []
     }
 
     // True when the given server's page-creation bridge is ready (its tab is loaded).
     func recordingBridgeReady(serverId: UUID) async -> Bool {
-        await representativeTab(for: serverId)?.bridgeSupportsPageCreation() ?? false
+        await pageTabs.representativeTab(for: serverId)?.bridgeSupportsPageCreation() ?? false
     }
 
     // Generic alert helper, reused by AppDelegate's RecordingController.presentError wiring.

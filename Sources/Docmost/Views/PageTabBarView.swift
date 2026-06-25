@@ -32,9 +32,8 @@ final class PageTabBarView: NSView {
     }
 
     private func setup() {
-        wantsLayer = true
         // Subtle native bar background, kept in sync with the system appearance.
-        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        TabStrip.applyBackground(to: self)
 
         // Bottom separator first => behind the tabs (the selected tab covers it).
         separator.boxType = .separator
@@ -42,11 +41,7 @@ final class PageTabBarView: NSView {
         addSubview(separator)
 
         // Full-height row so tabs reach the bottom edge and connect to the content.
-        stackView.orientation = .horizontal
-        stackView.alignment = .centerY
-        stackView.spacing = 2
-        stackView.detachesHiddenViews = true
-        stackView.translatesAutoresizingMaskIntoConstraints = false
+        TabStrip.configure(stack: stackView)
         addSubview(stackView)
 
         // Trailing "+" button: always visible, opens a new tab of the current server.
@@ -93,22 +88,15 @@ final class PageTabBarView: NSView {
         }
 
         // Full rebuild: the set or order of tabs actually changed.
-        for item in tabsByID.values {
-            stackView.removeArrangedSubview(item)
-            item.removeFromSuperview()
-        }
-        tabsByID.removeAll()
+        TabStrip.clearItems(&tabsByID, from: stackView)
 
         for tab in tabs {
             let id = tab.id
-            let item = TabItemView(title: tab.title)
-            item.setSelected(id == selectedID)
+            let item = TabStrip.makeItem(title: tab.title, selected: id == selectedID,
+                                         in: stackView, fullHeightOf: self)
             item.showsCloseButton = showClose
             item.onClick = { [weak self] in self?.onSelect?(id) }
             item.onClose = { [weak self] in self?.onClose?(id) }
-            stackView.addArrangedSubview(item)
-            // Tabs span the full bar height so they reach (and cover) the bottom line.
-            item.heightAnchor.constraint(equalTo: heightAnchor).isActive = true
             tabsByID[id] = item
         }
         currentOrder = newOrder
@@ -123,7 +111,7 @@ final class PageTabBarView: NSView {
     // is not adaptive, so re-resolve it on appearance changes.
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        TabStrip.applyBackground(to: self)
     }
 
     @objc private func newTabClicked() {
