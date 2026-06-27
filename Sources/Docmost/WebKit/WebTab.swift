@@ -67,6 +67,17 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDele
         // the real filename. applicationNameForUserAgent is appended to the default UA.
         configuration.applicationNameForUserAgent = "Version/17.6 Safari/605.1.15"
 
+        // Allow script-initiated clipboard writes. WKWebView disables DOM clipboard
+        // access from JavaScript by default, so Docmost's copy buttons (code-block
+        // copy, "copy link", share copy) — which call navigator.clipboard.writeText()
+        // or document.execCommand('copy') — silently fail / reject with NotAllowedError.
+        // These two private WKPreferences flags (set via KVC; the only available switch)
+        // re-enable programmatic copy and also suppress the macOS paste-permission popup.
+        // Key names map to WebKit's _setJavaScriptCanAccessClipboard: / _setDOMPasteAllowed:
+        // and have been stable for years.
+        configuration.preferences.setValue(true, forKey: "javaScriptCanAccessClipboard")
+        configuration.preferences.setValue(true, forKey: "DOMPasteAllowed")
+
         self.webView = DragImportWebView(frame: .zero, configuration: configuration)
 
         super.init()
